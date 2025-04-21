@@ -1,62 +1,40 @@
 #!/bin/bash
 
+# install_scdf_k8s.sh
+# Streamlined, commented installer for Spring Cloud Data Flow on Kubernetes with RabbitMQ and MariaDB.
+# - Exposes management interfaces via NodePort
+# - Automatically registers default RabbitMQ apps via REST API
+# - Logs all operations to install_scdf_k8s.log
+
 set -e
-
 LOGFILE="install_scdf_k8s.log"
-exec > >(tee "$LOGFILE") 2>&1
+NAMESPACE="scdf"
+DEFAULT_APPS_URI="https://dataflow.spring.io/rabbitmq-maven-latest"
+APPS_FILE="apps.properties"
+SCDF_SERVER_URL="http://localhost:30080"
 
-NAMESPACE=scdf
+# Utility: print a step message
+step() { echo -e "\033[1;32m$1\033[0m"; }
+# Utility: print an error message
+err() { echo -e "\033[1;31m$1\033[0m"; }
 
-# Helper for log file output only
-log() { echo "$1"; }
-# Helper for minimal user-facing step output
-step() { echo -e "\033[1;34m$1\033[0m" >&2; }
-# Helper for user-facing errors
-err() { echo -e "\033[1;31m$1\033[0m" >&2; }
-
-# Kill any process using a given port
-kill_port() {
-  local PORT=$1
-  PID=$(lsof -ti tcp:$PORT)
-  if [[ -n "$PID" ]]; then
-    step "Port $PORT in use, killing process $PID."
-    kill $PID
-    sleep 1
-  fi
-}
-
-step "[0/7] Cleaning up previous Spring Cloud Data Flow installs..."
-log "[0/7] Cleaning up previous Spring Cloud Data Flow installs..."
+# Clean up any previous installs
+step "[0/6] Cleaning up previous SCDF installs..."
 helm uninstall scdf --namespace "$NAMESPACE" >> "$LOGFILE" 2>&1 || true
 helm uninstall scdf-rabbitmq --namespace "$NAMESPACE" >> "$LOGFILE" 2>&1 || true
+kubectl delete namespace "$NAMESPACE" >> "$LOGFILE" 2>&1 || true
+kubectl wait --for=delete namespace/$NAMESPACE --timeout=120s >> "$LOGFILE" 2>&1 || true
 
-if kubectl get namespace "$NAMESPACE" >> "$LOGFILE" 2>&1; then
-  kubectl delete namespace "$NAMESPACE" >> "$LOGFILE" 2>&1
-  log "Waiting for namespace '$NAMESPACE' to terminate..."
-  while kubectl get namespace "$NAMESPACE" >> "$LOGFILE" 2>&1; do sleep 2; done
-fi
+# Create namespace
+kubectl create namespace "$NAMESPACE" >> "$LOGFILE" 2>&1 || true
 
-kubectl create namespace "$NAMESPACE" >> "$LOGFILE" 2>&1
-
-# --- Prerequisite Checks ---
-command -v kubectl >> "$LOGFILE" 2>&1 || { err "kubectl is required but not installed. Aborting."; exit 1; }
-command -v helm >> "$LOGFILE" 2>&1 || { err "helm is required but not installed. Aborting."; exit 1; }
-
-if ! kubectl cluster-info >> "$LOGFILE" 2>&1; then
-  err "No Kubernetes cluster detected. Please start your cluster in Docker Desktop and try again."
-  exit 1
-fi
-
-CURRENT_CONTEXT=$(kubectl config current-context)
-if [[ "$CURRENT_CONTEXT" != "docker-desktop" ]]; then
-  step "[Warning] Current kubectl context is '$CURRENT_CONTEXT', not 'docker-desktop'. If this is your Docker Desktop cluster or another local cluster, you may proceed."
-fi
-
-step "[1/7] Adding Helm repos..."
+# Add/update Helm repo
+step "[1/6] Adding/updating Helm repo..."
 helm repo add bitnami https://charts.bitnami.com/bitnami >> "$LOGFILE" 2>&1 || true
 helm repo update >> "$LOGFILE" 2>&1
 
-step "[2/7] Installing RabbitMQ..."
+# Install RabbitMQ
+step "[2/6] Installing RabbitMQ..."
 helm upgrade --install scdf-rabbitmq bitnami/rabbitmq \
   --namespace "$NAMESPACE" \
   --set auth.username=user \
@@ -69,7 +47,8 @@ helm upgrade --install scdf-rabbitmq bitnami/rabbitmq \
 
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=scdf-rabbitmq -n "$NAMESPACE" --timeout=300s >> "$LOGFILE" 2>&1
 
-step "[3/7] Installing Spring Cloud Data Flow (includes Skipper)..."
+# Install SCDF (MariaDB enabled by default)
+step "[3/6] Installing Spring Cloud Data Flow (includes Skipper & MariaDB)..."
 helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-cloud-dataflow \
   --namespace "$NAMESPACE" \
   --set rabbitmq.enabled=false \
@@ -79,41 +58,35 @@ helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-clou
   --set server.service.type=NodePort \
   --set server.service.nodePort=30080 >> "$LOGFILE" 2>&1
 
-# Wait for SCDF server pod to be running and ready (by name)
+# Wait for SCDF server and Skipper pods to be ready
+step "[4/6] Waiting for SCDF server and Skipper pods to be ready..."
 wait_for_ready() {
   local NAME_SUBSTR=$1
-  local TIMEOUT=${2:-300} # seconds
+  local TIMEOUT=${2:-300}
   local ELAPSED=0
   local INTERVAL=5
-  local POD=""
   while (( ELAPSED < TIMEOUT )); do
     POD=$(kubectl get pods -n "$NAMESPACE" --no-headers | grep "$NAME_SUBSTR" | awk '{print $1}')
     if [[ -n "$POD" ]]; then
       PHASE=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath="{.status.phase}")
       READY=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath="{.status.containerStatuses[*].ready}")
-      echo "Polling pod: $POD | Phase: $PHASE | Ready: $READY (Expect: Phase=Running, Ready=true)" >> "$LOGFILE"
       if [[ "$PHASE" == "Running" && "$READY" == *"true"* ]]; then
         step "$NAME_SUBSTR pod '$POD' is running and ready."
         return 0
       fi
-    else
-      echo "Polling: No pod found with name containing '$NAME_SUBSTR' (Expect: Phase=Running, Ready=true)" >> "$LOGFILE"
     fi
     sleep $INTERVAL
     ((ELAPSED+=INTERVAL))
   done
-  err "Timeout: Pod with name containing '$NAME_SUBSTR' did not become ready after $TIMEOUT seconds."
-  kubectl get pods -n "$NAMESPACE" >> "$LOGFILE" 2>&1
+  err "Timed out waiting for pod with name containing '$NAME_SUBSTR' to be ready."
   exit 1
 }
-
-step "[4/7] Waiting for Spring Cloud Data Flow server and Skipper pods to be ready..."
 wait_for_ready scdf-spring-cloud-dataflow-server 300
 wait_for_ready scdf-spring-cloud-dataflow-skipper 300
 
+# Print management URLs
 cat <<EOF
-
---- Management URLs and Credentials ---
+\n--- Management URLs and Credentials ---
 SCDF Dashboard:    http://127.0.0.1:30080/dashboard
 RabbitMQ MGMT UI:  http://127.0.0.1:31672 (user/bitnami)
 RabbitMQ AMQP:     localhost:30672 (user/bitnami)
@@ -121,34 +94,24 @@ Namespace:         $NAMESPACE
 To stop services, delete the namespace or uninstall the Helm releases.
 EOF
 
-step "\nSpring Cloud Data Flow is fully installed and all management interfaces are exposed as NodePorts!"
-
-step "[5/7] Importing default Spring Cloud Data Flow applications..."
-
-SCDF_SHELL_JAR="scdf-shell.jar"
-SCDF_SERVER_URL="http://localhost:30080/api"
-DEFAULT_APPS_URI="https://dataflow.spring.io/rabbitmq-maven-latest"
-
-if [ ! -f "$SCDF_SHELL_JAR" ]; then
-  step "Downloading Spring Cloud Data Flow Shell..."
-  wget -qO "$SCDF_SHELL_JAR" https://repo.spring.io/release/org/springframework/cloud/spring-cloud-dataflow-shell/2.11.2/spring-cloud-dataflow-shell-2.11.2.jar
-fi
-
-# Wait for SCDF REST API to be available (use /about for health check)
-step "Waiting for SCDF REST API to be available..."
-for i in {1..30}; do
-  if curl -sSf "http://localhost:30080/about" > /dev/null; then
-    step "SCDF REST API is available."
-    break
+step "[5/6] Registering default RabbitMQ apps in SCDF..."
+# Download and register default apps
+curl -fsSL "$DEFAULT_APPS_URI" -o "$APPS_FILE" || { err "Failed to download $DEFAULT_APPS_URI"; exit 1; }
+while IFS= read -r line; do
+  # Skip comments, blank lines, and metadata lines
+  [[ "$line" =~ ^#.*$ || -z "$line" || "$line" == *":jar:metadata"* ]] && continue
+  type=$(echo "$line" | cut -d'.' -f1)
+  name=$(echo "$line" | cut -d'.' -f2)
+  uri=$(echo "$line" | cut -d'=' -f2-)
+  [[ -z "$type" || -z "$name" || -z "$uri" ]] && continue
+  REG_URL="$SCDF_SERVER_URL/apps/$type/$name"
+  step "Registering $type:$name -> $uri"
+  REG_OUTPUT=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$REG_URL" -d "uri=$uri")
+  echo "$type.$name=$uri -> $REG_OUTPUT" >> "$LOGFILE"
+  if [ "$REG_OUTPUT" != "201" ]; then
+    err "Failed to register $type:$name ($REG_OUTPUT). See $LOGFILE for details."
   fi
-  sleep 4
-done
+done < "$APPS_FILE"
+step "Default applications registration complete."
 
-# Import default applications
-step "Importing default applications from $DEFAULT_APPS_URI ..."
-IMPORT_OUTPUT=$(java -jar "$SCDF_SHELL_JAR" --dataflow.uri=$SCDF_SERVER_URL --shell.command="app import --uri $DEFAULT_APPS_URI" 2>&1)
-echo "$IMPORT_OUTPUT" >> "$LOGFILE"
-echo "$IMPORT_OUTPUT" | grep -i 'error\|fail' && err "ERROR: Failed to import default applications. See $LOGFILE for details."
-step "Default applications import complete."
-
-step "[6/7] Spring Cloud Data Flow installation complete."
+step "[6/6] Spring Cloud Data Flow installation complete."
