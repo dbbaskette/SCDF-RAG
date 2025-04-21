@@ -1,0 +1,9 @@
+# Ignore logs, shell history, and Java artifacts
+*.log
+*.jar
+*.class
+*.pyc
+__pycache__/
+.DS_Store
+.env
+.history
