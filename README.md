@@ -77,6 +77,26 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 
 ---
 
+## MinIO S3 Integration (Static hostPath)
+
+This project uses a static PersistentVolume and PersistentVolumeClaim for MinIO, mapped to a host directory for reliable, local storage. This avoids dynamic provisioning issues and ensures data persists on your machine.
+
+- **YAML location:** `yaml/minio-pv-pvc.yaml`
+- **Host path:** `/Users/dbbaskette/Projects/SCDF-RAG/sourceDocs` (must exist before install)
+- **Script:** `minio_install_scdf.sh` handles all cleanup, PV/PVC creation, and Helm install.
+
+**How it works:**
+1. Deletes any existing MinIO PVC/PV to avoid StorageClass mismatches.
+2. Applies the static PV/PVC YAML.
+3. Installs MinIO via Helm, referencing the pre-created PVC (no storageClass set in Helm command).
+
+**To deploy MinIO:**
+```sh
+./minio_install_scdf.sh
+```
+
+---
+
 ## Logs
 
 All logs are written to the `logs/` directory for easier troubleshooting and organization:

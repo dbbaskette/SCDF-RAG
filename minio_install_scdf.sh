@@ -1,13 +1,40 @@
 #!/bin/bash
 
+# ------------------------------------------------------------------------------
+# MinIO Installation Script for SCDF on Kubernetes
+# ------------------------------------------------------------------------------
+# This script installs MinIO with a static PersistentVolume and PersistentVolumeClaim
+# using hostPath storage mapped to /Users/dbbaskette/Projects/SCDF-RAG/sourceDocs.
+# It ensures any previous MinIO PVC/PV are deleted, applies the YAML, and installs
+# MinIO via Helm using the pre-created PVC. No storageClass is set in the Helm command
+# to avoid dynamic provisioning conflicts.
+#
+# Usage:
+#   chmod +x minio_install_scdf.sh
+#   ./minio_install_scdf.sh
+#
+# Requirements:
+#   - 'scdf' namespace must exist
+#   - kubectl, helm, and access to a running Kubernetes cluster
+#   - Bitnami MinIO Helm chart repo
+#   - Directory /Users/dbbaskette/Projects/SCDF-RAG/sourceDocs exists on the host
+#
+# Steps performed:
+#   1. Cleanup any existing MinIO PVC/PV
+#   2. Apply static PV/PVC YAML
+#   3. Install/upgrade MinIO via Helm (using the PVC)
+#   4. Wait for MinIO pod to be ready
+#   5. Port-forward MinIO service to localhost:9000
+# ------------------------------------------------------------------------------
+
 # minio_install_scdf.sh
 # Purpose: Deploy a MinIO S3-compatible server in the existing 'scdf' namespace on a Kubernetes cluster,
-#          using a dynamically provisioned PersistentVolumeClaim (PVC) via the local-path StorageClass (Docker Desktop compatible).
+#          using a static PersistentVolume and PersistentVolumeClaim, mapping the hostPath to /Users/dbbaskette/Projects/SCDF-RAG/sourceDocs.
 #
 # Requirements:
 #   - 'scdf' namespace must already exist in the cluster.
 #   - 'kubectl' and 'helm' must be installed and configured to access your cluster.
-#   - Docker Desktop for Mac/Windows or any cluster with a dynamic local-path provisioner.
+#   - Docker Desktop for Mac/Windows or any cluster with a static hostpath provisioner.
 #
 # Usage:
 #   chmod +x minio_install_scdf.sh
@@ -63,7 +90,7 @@ wait_for_ready() {
   exit 1
 }
 
-step "[0/4] Checking for existing MinIO install and cleaning up if found..."
+step "[0/5] Checking for existing MinIO install and cleaning up if found..."
 # Delete port-forward if running
 if [[ -f "$LOGDIR/minio_port_forward.pid" ]]; then
   OLD_PID=$(cat "$LOGDIR/minio_port_forward.pid")
@@ -84,40 +111,42 @@ if kubectl get pvc $MINIO_PVC -n $NAMESPACE >>"$LOGFILE" 2>&1; then
   kubectl delete pvc $MINIO_PVC -n $NAMESPACE >>"$LOGFILE" 2>&1
 fi
 
-step "[1/4] Creating PersistentVolumeClaim for MinIO data storage (Docker Desktop local-path)..."
-cat <<EOF | kubectl apply -n $NAMESPACE -f - >>"$LOGFILE" 2>&1
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: $MINIO_PVC
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  storageClassName: local-path
-EOF
+step "[1/5] Cleaning up old MinIO PVC and PV (if they exist)..."
+kubectl delete pvc minio-pvc -n $NAMESPACE --ignore-not-found >>"$LOGFILE" 2>&1
+kubectl delete pv minio-pv --ignore-not-found >>"$LOGFILE" 2>&1
 
-step "[2/4] Adding Bitnami Helm repo and updating..."
+step "Verifying PVCs and PVs are deleted..."
+kubectl get pvc -n $NAMESPACE >>"$LOGFILE" 2>&1
+kubectl get pv >>"$LOGFILE" 2>&1
+
+step "Applying MinIO PersistentVolume and PersistentVolumeClaim YAML..."
+kubectl apply -f yaml/minio-pv-pvc.yaml >>"$LOGFILE" 2>&1
+
+step "Checking MinIO PVC status after creation..."
+kubectl describe pvc minio-pvc -n $NAMESPACE >>"$LOGFILE" 2>&1
+
+step "[2/5] Adding Bitnami Helm repo and updating..."
 helm repo add bitnami https://charts.bitnami.com/bitnami >>"$LOGFILE" 2>&1
 helm repo update >>"$LOGFILE" 2>&1
 
-step "[3/4] Deploying MinIO via Helm in namespace '$NAMESPACE'..."
+step "[3/5] Installing MinIO via Helm (using static hostPath PV)..."
 helm upgrade --install $MINIO_RELEASE bitnami/minio \
   --namespace $NAMESPACE \
   --set persistence.existingClaim=$MINIO_PVC \
-  --set persistence.mountPath=/bitnami/minio/data \
-  --set accessKey.password="minioadmin" \
-  --set secretKey.password="minioadmin" \
-  --set defaultBuckets="mybucket" >>"$LOGFILE" 2>&1
+  --set mode=standalone \
+  --set resources.requests.memory=512Mi \
+  --set resources.requests.cpu=250m \
+  --set service.type=NodePort \
+  --set service.nodePorts.api=9000 \
+  --set service.nodePorts.console=9001 >>"$LOGFILE" 2>&1
 
-step "Waiting for MinIO pod to be ready before port-forwarding..."
-wait_for_ready "minio"
+step "[4/5] Waiting for MinIO pod to be ready..."
+wait_for_ready minio 300
 
-step "[4/4] Setting up port-forward to MinIO service on localhost:9000..."
-# Start port-forward in the background and log output
-kubectl port-forward svc/$MINIO_RELEASE -n $NAMESPACE 9000:9000 >>"$LOGFILE" 2>&1 &
+step "[5/5] Setting up port-forward to MinIO service on localhost:9000..."
+# Find the correct MinIO service name (exclude headless)
+MINIO_SVC=$(kubectl get svc -n $NAMESPACE -o name | grep minio | grep -v headless | head -n1 | cut -d/ -f2)
+kubectl port-forward svc/$MINIO_SVC -n $NAMESPACE 9000:9000 >>"$LOGFILE" 2>&1 &
 PORT_FORWARD_PID=$!
 echo $PORT_FORWARD_PID > "$LOGDIR/minio_port_forward.pid"
 sleep 2
