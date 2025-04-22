@@ -1,17 +1,18 @@
 #!/bin/bash
 
 # install_scdf_k8s.sh
-# Streamlined installer for Spring Cloud Data Flow on Kubernetes with RabbitMQ and MariaDB.
+# Streamlined installer for Spring Cloud Data Flow (SCDF) on Kubernetes with RabbitMQ and MariaDB.
 # - Exposes management interfaces via NodePort
 # - Registers default RabbitMQ apps as Docker images via REST API
-# - Logs all operations to install_scdf_k8s.log
+# - Logs all operations to logs/install_scdf_k8s.log
 
 # --- Constants ---
-LOGFILE="install_scdf_k8s.log"
+LOGDIR="$(pwd)/logs"
+mkdir -p "$LOGDIR"
+LOGFILE="$LOGDIR/install_scdf_k8s.log"
 NAMESPACE="scdf"
 DEFAULT_DOCKER_APPS_URI="https://dataflow.spring.io/rabbitmq-docker-latest"
 DOCKER_APPS_FILE="apps-docker.properties"
-# TEMP: Force registration failure for debug
 SCDF_SERVER_URL="http://localhost:30080"
 SHELL_JAR="spring-cloud-dataflow-shell.jar"
 SHELL_URL="https://repo.maven.apache.org/maven2/org/springframework/cloud/spring-cloud-dataflow-shell/2.11.5/spring-cloud-dataflow-shell-2.11.5.jar"
@@ -103,7 +104,7 @@ register_default_apps() {
 # Print management URLs
 print_management_urls() {
   cat <<EOF
-\n--- Management URLs and Credentials ---
+--- Management URLs and Credentials ---
 SCDF Dashboard:    http://127.0.0.1:30080/dashboard
 RabbitMQ MGMT UI:  http://127.0.0.1:31672 (user/bitnami)
 RabbitMQ AMQP:     localhost:30672 (user/bitnami)
@@ -132,8 +133,30 @@ if [[ $SKIP_INSTALL -eq 0 ]]; then
   step "[0/6] Cleaning up previous SCDF installs..."
   helm uninstall scdf --namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
   helm uninstall scdf-rabbitmq --namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
+
+  # Wait for deployments to be deleted
+  step "Waiting for SCDF and RabbitMQ deployments to be deleted..."
+  for dep in scdf scdf-rabbitmq; do
+    for i in {1..30}; do
+      if ! kubectl get deployment "$dep" -n "$NAMESPACE" &>/dev/null; then
+        step "$dep deployment deleted."
+        break
+      fi
+      step "Waiting for $dep deployment to be deleted... ($i/30)"
+      sleep 2
+    done
+  done
+
   kubectl delete namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
-  kubectl wait --for=delete namespace/$NAMESPACE --timeout=120s >>"$LOGFILE" 2>&1 || true
+  for i in {1..60}; do
+    if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
+      step "Namespace $NAMESPACE deleted."
+      break
+    fi
+    step "Waiting for namespace $NAMESPACE to be deleted... ($i/60)"
+    sleep 2
+  done
+
   kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
 
   echo "[INFO] Running full install steps..."
@@ -173,12 +196,24 @@ if [[ $SKIP_INSTALL -eq 0 ]]; then
 
   # --- SCDF Shell ---
   download_shell_jar
-else
-  echo "[INFO] Skipping install steps, starting with app registration."
-fi
 
-# --- Register Default Apps as Docker Images ---
-register_default_apps
+  # --- Register Default Apps as Docker Images ---
+  register_default_apps >>"$LOGFILE" 2>&1
+else
+  echo "[INFO] Skipping install steps, starting with app/app registration reset."
+  download_shell_jar >>"$LOGFILE" 2>&1
+
+  # --- Delete all streams ---
+  step "Destroying all streams using SCDF shell built-in command..."
+  echo "stream all destroy --force" | java -jar "$SHELL_JAR" --dataflow.uri="$SCDF_SERVER_URL" >>"$LOGFILE" 2>&1
+
+  # --- Unregister all applications ---
+  step "Unregistering all applications using SCDF shell built-in command..."
+  echo "app all unregister" | java -jar "$SHELL_JAR" --dataflow.uri="$SCDF_SERVER_URL" >>"$LOGFILE" 2>&1
+
+  # --- Register Default Apps as Docker Images ---
+  register_default_apps >>"$LOGFILE" 2>&1
+fi
 
 # --- Verification ---
 step "Querying registered apps for verification..."
