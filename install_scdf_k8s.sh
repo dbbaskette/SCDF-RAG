@@ -100,10 +100,18 @@ curl -fsSL "$DEFAULT_APPS_URI" -o "$APPS_FILE" || { err "Failed to download $DEF
 while IFS= read -r line; do
   # Skip comments, blank lines, and metadata lines
   [[ "$line" =~ ^#.*$ || -z "$line" || "$line" == *":jar:metadata"* ]] && continue
-  type=$(echo "$line" | cut -d'.' -f1)
-  name=$(echo "$line" | cut -d'.' -f2)
-  uri=$(echo "$line" | cut -d'=' -f2-)
-  [[ -z "$type" || -z "$name" || -z "$uri" ]] && continue
+
+  # Split on the first '='
+  key="${line%%=*}"
+  uri="${line#*=}"
+
+  # Split key into type and name on the first '.'
+  type="${key%%.*}"
+  name="${key#*.}"
+
+  # Only register if uri starts with maven://
+  [[ "$uri" != maven://* ]] && continue
+
   REG_URL="$SCDF_SERVER_URL/apps/$type/$name"
   step "Registering $type:$name -> $uri"
   REG_OUTPUT=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$REG_URL" -d "uri=$uri")
