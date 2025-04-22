@@ -1,5 +1,6 @@
 # Ignore logs, shell history, and Java artifacts
-*.log
+logs/install_minio_scdf.log
+logs/minio_install_scdf.log
 *.jar
 *.class
 *.pyc
@@ -7,3 +8,4 @@ __pycache__/
 .DS_Store
 .env
 .history
+sourceDocs/
