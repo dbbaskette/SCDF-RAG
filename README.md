@@ -102,6 +102,50 @@ This project uses a static PersistentVolume and PersistentVolumeClaim for MinIO,
 
 ---
 
+## SCDF S3-to-Log Stream Setup
+
+This project contains scripts and configuration to deploy a Spring Cloud Data Flow (SCDF) stream that reads files from an S3/MinIO bucket and writes them to a log sink, using RabbitMQ as the message broker.
+
+### Files
+
+- `create_stream.sh`  
+  Bash script to create and deploy the SCDF stream. Reads all configuration from `create_stream.properties`.
+- `create_stream.properties`  
+  Properties file containing all configurable settings for S3/MinIO, RabbitMQ, and SCDF.
+
+### Usage
+
+1. **Edit `create_stream.properties`**
+    - Set your S3/MinIO endpoint, bucket, and credentials.
+    - Set your RabbitMQ host and credentials (e.g., `RABBIT_USER`, `RABBIT_PASS`).
+    - Set SCDF connection details.
+2. **Run the script:**
+    ```sh
+    ./create_stream.sh
+    ```
+    The script will:
+    - Print debug info about the current configuration.
+    - Destroy and recreate the stream in SCDF.
+    - Bind all apps in the stream to the correct RabbitMQ service.
+    - Log actions to `logs/create_stream.log`.
+
+### Requirements
+- Bash
+- AWS CLI (for S3/MinIO testing)
+- `spring-cloud-dataflow-shell.jar` (must be present in the working directory)
+- Access to your SCDF and RabbitMQ services
+
+### Notes
+- All sensitive credentials are redacted in logs.
+- To change any configuration, edit `create_stream.properties` and re-run the script.
+- The script is designed to be easily portable for local or Kubernetes-based SCDF environments.
+
+---
+
+For more details, see comments at the top of `create_stream.sh`.
+
+---
+
 ## Logs
 
 All logs are written to the `logs/` directory for easier troubleshooting and organization:
