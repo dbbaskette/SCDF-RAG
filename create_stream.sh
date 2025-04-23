@@ -52,8 +52,12 @@ echo "[DEBUG] RABBIT_USER=[$RABBIT_USER]"
 # Do not echo RABBIT_PASS for security
 
 # --- RabbitMQ connection properties ---
-RABBIT_HOST=scdf-rabbitmq
-RABBIT_PORT=5672
+# Set defaults if not defined in properties
+: "${RABBIT_HOST:=scdf-rabbitmq}"
+: "${RABBIT_PORT:=5672}"
+
+RABBIT_HOST=$RABBIT_HOST
+RABBIT_PORT=$RABBIT_PORT
 # Use credentials from properties file
 # shellcheck disable=SC2154
 # (RABBIT_USER and RABBIT_PASS are set by sourcing the properties file)
@@ -62,13 +66,19 @@ RABBIT_PORT=5672
 RABBIT_PROPS="--spring.rabbitmq.host=$RABBIT_HOST --spring.rabbitmq.port=$RABBIT_PORT --spring.rabbitmq.username=$RABBIT_USER --spring.rabbitmq.password=$RABBIT_PASS"
 
 # --- Create and deploy the S3-based stream (S3 source to log sink) ---
-definition="$S3_APP_NAME --s3.common.endpoint-url=$S3_ENDPOINT --s3.common.path-style-access=$S3_PATH_STYLE_ACCESS --s3.supplier.remote-dir=$S3_BUCKET --s3.supplier.poller.fixed-delay=10000 --cloud.aws.region.static=$S3_REGION --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY --cloud.aws.credentials.secretKey=$S3_SECRET_KEY --cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO --outputType=application/octet-stream $RABBIT_PROPS --logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS --logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE --logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK --logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE | log $RABBIT_PROPS"
+definition="$S3_APP_NAME --s3.common.endpoint-url=$S3_ENDPOINT --s3.common.path-style-access=$S3_PATH_STYLE_ACCESS --s3.supplier.remote-dir=$S3_BUCKET --s3.supplier.poller.fixed-delay=10000 --cloud.aws.region.static=$S3_REGION --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY --cloud.aws.credentials.secretKey=$S3_SECRET_KEY --cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO --outputType=application/octet-stream --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE $RABBIT_PROPS --logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS --logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE --logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK --logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE | $APP_NAME $RABBIT_PROPS | log $RABBIT_PROPS"
 
 # Log the stream definition but redact sensitive credentials
-redacted_definition="$S3_APP_NAME --s3.common.endpoint-url=$S3_ENDPOINT --s3.common.path-style-access=$S3_PATH_STYLE_ACCESS --s3.supplier.remote-dir=$S3_BUCKET --s3.supplier.poller.fixed-delay=10000 --cloud.aws.region.static=$S3_REGION --cloud.aws.credentials.accessKey=**** --cloud.aws.credentials.secretKey=**** --cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO --outputType=application/octet-stream $RABBIT_PROPS --logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS --logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE --logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK --logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE | log $RABBIT_PROPS"
+redacted_definition="$S3_APP_NAME --s3.common.endpoint-url=$S3_ENDPOINT --s3.common.path-style-access=$S3_PATH_STYLE_ACCESS --s3.supplier.remote-dir=$S3_BUCKET --s3.supplier.poller.fixed-delay=10000 --cloud.aws.region.static=$S3_REGION --cloud.aws.credentials.accessKey=**** --cloud.aws.credentials.secretKey=**** --cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO --outputType=application/octet-stream --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE $RABBIT_PROPS --logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS --logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE --logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK --logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE | $APP_NAME $RABBIT_PROPS | log $RABBIT_PROPS"
 
 step() {
   echo -e "\033[1;32m$1\033[0m"
+}
+
+# --- Quiet Dataflow Shell Helper ---
+df_cmd_quiet() {
+  # Accept a command string, run it in the SCDF shell, suppress ALL output (including prompts, tables, status) except errors, to logfile only
+  echo "$1" | $SCDF_CMD 2>> "$LOGFILE" | grep -vE '^(dataflow:>|\s*╔|\s*║|\s*╚|\s*─+|\s*\||^\s*$|Stream status:|Stream Deployment properties:|^\{.*\}$|^\s*\})' >> "$LOGFILE" 2>&1
 }
 
 # --- Check if stream exists and delete if so ---
@@ -77,9 +87,25 @@ if echo "stream info $STREAM_NAME" | $SCDF_CMD 2>&1 | grep -v 'does not exist' |
   echo "[LOG] Command: stream destroy $STREAM_NAME" >> "$LOGFILE"
   echo "stream destroy $STREAM_NAME" | $SCDF_CMD >> "$LOGFILE" 2>&1
   sleep 3  # Give SCDF a moment to clean up
+
+  # --- Load app name from properties ---
+  : "${APP_NAME:=pdf-preprocessor}"
+  : "${APP_IMAGE:=dbbaskette/pdf-preprocessor:0.0.1-SNAPSHOT}"
+
+  # --- Unregister the app if it exists (replicated from old script) ---
+  step "Unregistering processor $APP_NAME (if exists)"
+  echo "[LOG] Command: app unregister --type processor --name $APP_NAME" >>"$LOGFILE"
+  df_cmd_quiet "app unregister --type processor --name $APP_NAME" || true
+
+  # --- Register and verify pdf-preprocessor app ---
+  echo "[INFO] Registering $APP_NAME app..."
+  df_cmd_quiet "app register --type processor --name $APP_NAME --uri docker:$APP_IMAGE" || true
+
+  # Verify registration
+  df_cmd_quiet "app info $APP_NAME processor" || true
 fi
 
-step "Creating and deploying stream: $STREAM_NAME (S3 source to log sink)"
+step "Creating and deploying stream: $STREAM_NAME (S3 source to $APP_NAME processor to log sink)"
 echo "[LOG] Command: stream create $STREAM_NAME --definition \"[REDACTED] see below\" --deploy" >>"$LOGFILE"
 echo -e "\n[DEBUG] Resolved stream definition (credentials redacted):" >> "$LOGFILE"
 echo "$redacted_definition" >> "$LOGFILE"
