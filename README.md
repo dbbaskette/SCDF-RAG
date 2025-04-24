@@ -16,6 +16,23 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 
 ---
 
+## PDF Preprocessor Microservice
+
+The `pdf-preprocessor` is a Spring Cloud Stream processor application that extracts text from PDF files received via the SCDF stream pipeline.
+
+### How it works
+- **Input:** Receives messages with the contents of a PDF file as a byte array (`byte[]`) from the message broker (RabbitMQ).
+- **Processing:**
+    1. Writes the byte array to a temporary file.
+    2. Uses Apache PDFBox to extract all text from the PDF.
+    3. Builds a new message with the extracted text as the payload, preserving all original headers and adding a `filename` header.
+    4. Deletes the temporary file after processing.
+- **Error Handling:** If PDF extraction fails, the service emits an error message as the payload and logs the error.
+
+This microservice is intended to be used in a Spring Cloud Data Flow stream, typically downstream of an S3 source app that emits PDF files from an S3 bucket.
+
+---
+
 ## Prerequisites
 
 - **Kubernetes cluster** (e.g., Docker Desktop, Minikube, Kind, or cloud provider)
