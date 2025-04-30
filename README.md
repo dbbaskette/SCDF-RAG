@@ -209,7 +209,6 @@ For more details, see comments at the top of `create_stream.sh`.
 
 All logs are written to the `logs/` directory for easier troubleshooting and organization:
 - `logs/scdf_install_k8s.log`
-- `logs/minio_install_scdf.log`
 - `logs/create_stream.log`
 
 ---

@@ -1,6 +1,7 @@
 # Ignore logs, shell history, and Java artifacts
 logs/install_minio_scdf.log
 logs/minio_install_scdf.log
+logs/
 *.jar
 *.class
 *.pyc
@@ -11,3 +12,5 @@ __pycache__/
 sourceDocs/
 instructions.txt
 resources/scdf-values.yaml
+resources/ollama-nomic.yaml
+# Add any other auto-generated files here
