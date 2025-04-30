@@ -43,6 +43,14 @@ externalDatabase:
     password: ${POSTGRES_PASSWORD}
 rabbitmq:
   enabled: true
+  auth:
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+  service:
+    type: NodePort
+    nodePorts:
+      amqp: ${RABBITMQ_NODEPORT_AMQP}
+      manager: ${RABBITMQ_NODEPORT_MANAGER}
 networkPolicy:
   enabled: false
 EOF
