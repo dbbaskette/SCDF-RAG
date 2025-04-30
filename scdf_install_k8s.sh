@@ -13,11 +13,23 @@ fi
 # --- Generate SCDF values file from environment variables (external PostgreSQL, chart-managed RabbitMQ) ---
 cat > resources/scdf-values.yaml <<EOF
 skipper:
-  env:
-    - name: MAVEN_LOCAL_REPO
-      value: /dataflow-maven-repo
+  extraEnvVars:
+    - name: MAVEN_LOCAL_REPOSITORY
+      value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
-      value: "-Duser.home=/dataflow-maven-repo -Dmaven.repo.local=/dataflow-maven-repo"
+      value: "-Duser.home=/dataflow-maven-repo"
+  extraVolumeMounts:
+    - name: maven-repo
+      mountPath: /dataflow-maven-repo
+  extraVolumes:
+    - name: maven-repo
+      emptyDir: {}
+server:
+  extraEnvVars:
+    - name: MAVEN_LOCAL_REPOSITORY
+      value: "/dataflow-maven-repo/.m2/repository"
+    - name: JAVA_OPTS
+      value: "-Duser.home=/dataflow-maven-repo"
   extraVolumeMounts:
     - name: maven-repo
       mountPath: /dataflow-maven-repo
@@ -64,6 +76,14 @@ STEP_COUNTER=0
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/scdf_install_k8s.log"
+
+# Log header for visual separation
+{
+  echo -e "\n\n\n"
+  echo "#############################################################"
+  echo "#   SCDF INSTALL SCRIPT LOG   |   $(date '+%Y-%m-%d %H:%M:%S')   #"
+  echo "#############################################################"
+} >> "$LOGFILE"
 
 # --- Namespace Setup ---
 NAMESPACE="${NAMESPACE:-scdf}"
@@ -150,6 +170,7 @@ wait_for_ready() {
 # Usage: download_shell_jar
 # Ensures $SHELL_JAR exists
 download_shell_jar() {
+  step_major "Downloading SCDF Shell JAR"
   if [[ ! -f "$SHELL_JAR" ]]; then
     step_minor "Downloading SCDF Shell JAR..."
     curl -fsSL -o "$SHELL_JAR" "$SHELL_URL" >>"$LOGFILE" 2>&1 || { err "Failed to download SCDF Shell JAR"; exit 1; }
@@ -163,6 +184,7 @@ download_shell_jar() {
 # Register all default apps as Maven artifacts
 # Usage: register_default_apps_maven
 register_default_apps_maven() {
+  step_major "Registering default apps as Maven artifacts"
   step_minor "Registering all default apps as Maven artifacts..."
   local failed=0
   while IFS= read -r line; do
@@ -175,6 +197,7 @@ register_default_apps_maven() {
     REG_URL="$SCDF_SERVER_URL/apps/$type/$name"
     step_minor "Registering $type:$name -> $uri"
     echo "[register_default_apps_maven] Registering $type:$name -> $uri ($REG_URL)" >>"$LOGFILE"
+    echo "[register_default_apps_maven] curl -s -w '\n%{http_code}' -X POST '$REG_URL' -d 'uri=$uri'" >>"$LOGFILE"
     REG_OUTPUT=$(curl -s -w "\n%{http_code}" -X POST "$REG_URL" -d "uri=$uri" 2>&1)
     HTTP_CODE=$(echo "$REG_OUTPUT" | tail -n1)
     BODY=$(echo "$REG_OUTPUT" | sed '$d')
@@ -198,12 +221,12 @@ register_default_apps_maven() {
 print_management_urls() {
   {
     echo "--- Management URLs and Credentials ---"
-    echo "SCDF Dashboard:    http://127.0.0.1:30080/dashboard"
-    echo "RabbitMQ MGMT UI:  http://127.0.0.1:$RABBITMQ_NODEPORT_MANAGER [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
-    echo "RabbitMQ AMQP:     localhost:$RABBITMQ_NODEPORT_AMQP [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
-    echo "PostgreSQL:        localhost:$POSTGRES_NODEPORT [$POSTGRES_USER/$POSTGRES_PASSWORD, DB: $POSTGRES_DB]"
+    echo "SCDF Dashboard:    http://$EXTERNAL_HOSTNAME:$SCDF_SERVER_PORT/dashboard"
+    echo "RabbitMQ MGMT UI:  http://$EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_MANAGER [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
+    echo "RabbitMQ AMQP:     $EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_AMQP [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
+    echo "PostgreSQL:        $EXTERNAL_HOSTNAME:$POSTGRES_NODEPORT [$POSTGRES_USER/$POSTGRES_PASSWORD, DB: $POSTGRES_DB]"
     echo "Ollama (nomic):    http://ollama-nomic.$NAMESPACE.svc.cluster.local:11434 [internal K8s]"
-    echo "Ollama (nomic, local): http://127.0.0.1:$OLLAMA_NODEPORT [if port-forwarded]"
+    echo "Ollama (nomic, local): http://$EXTERNAL_HOSTNAME:$OLLAMA_NODEPORT [if port-forwarded]"
     MINIO_USER=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-user}" | base64 --decode 2>/dev/null)
     MINIO_PASS=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-password}" | base64 --decode 2>/dev/null)
     if [[ -n "$MINIO_USER" && -n "$MINIO_PASS" ]]; then
@@ -211,7 +234,7 @@ print_management_urls() {
       echo "  Access Key: $MINIO_USER"
       echo "  Secret Key: $MINIO_PASS"
     fi
-    echo "MinIO MGMT Console: http://127.0.0.1:${MINIO_CONSOLE_PORT}"
+    echo "MinIO MGMT Console: http://$EXTERNAL_HOSTNAME:${MINIO_CONSOLE_PORT}"
     echo "Namespace:         $NAMESPACE"
     echo "To stop services, delete the namespace or uninstall the Helm releases."
     echo "---"
@@ -371,9 +394,6 @@ install_scdf() {
   ensure_namespace
   install_postgresql
   step_major "Installing Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ), and waiting for pods to be ready..."
-  : "${SCDF_SERVER_PORT:=$SCDF_SERVER_PORT}"
-  SCDF_SERVER_URL="http://localhost:$SCDF_SERVER_PORT"
-  export SCDF_SERVER_URL
   helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-cloud-dataflow \
     --namespace "$NAMESPACE" \
     --values resources/scdf-values.yaml \
@@ -382,7 +402,6 @@ install_scdf() {
   wait_for_ready scdf-spring-cloud-dataflow-server 300
   wait_for_ready scdf-spring-cloud-dataflow-skipper 300
   step_done "Spring Cloud Data Flow and Skipper installed and ready."
-  install_ollama_nomic
 }
 
 # --- Interactive Menu for --test ---
@@ -396,9 +415,10 @@ show_menu() {
   echo "4) Install Ollama Nomic Model"
   echo "5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
   echo "6) Download SCDF Shell JAR"
-  echo "7) Display the Management URLs"
+  echo "7) Register Default Apps (Maven)"
+  echo "8) Display the Management URLs"
   echo "q) Exit"
-  echo -n "Select a step to run [1-7, q to quit]: "
+  echo -n "Select a step to run [1-8, q to quit]: "
 }
 
 if [[ "$1" == "--test" ]]; then
@@ -425,6 +445,9 @@ if [[ "$1" == "--test" ]]; then
         download_shell_jar
         ;;
       7)
+        register_default_apps_maven
+        ;;
+      8)
         print_management_urls
         ;;
       q|Q)
@@ -432,7 +455,7 @@ if [[ "$1" == "--test" ]]; then
         exit 0
         ;;
       *)
-        echo "Invalid option. Please select 1-7 or q to quit."
+        echo "Invalid option. Please select 1-8 or q to quit."
         ;;
     esac
     echo
@@ -443,8 +466,11 @@ fi
 
 # --- Full Install Flow ---
 cleanup_previous_install
-install_scdf
+install_postgresql
 install_minio
+install_ollama_nomic
+install_scdf
+register_default_apps_maven
 download_shell_jar
 print_management_urls
 

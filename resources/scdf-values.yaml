@@ -1,9 +1,21 @@
 skipper:
-  env:
-    - name: MAVEN_LOCAL_REPO
-      value: /dataflow-maven-repo
+  extraEnvVars:
+    - name: MAVEN_LOCAL_REPOSITORY
+      value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
-      value: "-Duser.home=/dataflow-maven-repo -Dmaven.repo.local=/dataflow-maven-repo"
+      value: "-Duser.home=/dataflow-maven-repo"
+  extraVolumeMounts:
+    - name: maven-repo
+      mountPath: /dataflow-maven-repo
+  extraVolumes:
+    - name: maven-repo
+      emptyDir: {}
+server:
+  extraEnvVars:
+    - name: MAVEN_LOCAL_REPOSITORY
+      value: "/dataflow-maven-repo/.m2/repository"
+    - name: JAVA_OPTS
+      value: "-Duser.home=/dataflow-maven-repo"
   extraVolumeMounts:
     - name: maven-repo
       mountPath: /dataflow-maven-repo
@@ -29,5 +41,13 @@ externalDatabase:
     password: bitnami
 rabbitmq:
   enabled: true
+  auth:
+    username: user
+    password: bitnami
+  service:
+    type: NodePort
+    nodePorts:
+      amqp: 30672
+      manager: 31672
 networkPolicy:
   enabled: false
