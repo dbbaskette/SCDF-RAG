@@ -35,6 +35,33 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
     ```
    - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and the Ollama Nomic model in one step.
    - Minimal output will be shown in the terminal; see `logs/scdf_install_k8s.log` for details.
+
+### Interactive Test Mode
+
+You can run the install script in test mode to execute or re-run individual steps using an interactive menu:
+
+```sh
+./scdf_install_k8s.sh --test
+```
+
+Menu options:
+
+```
+SCDF Install Script Test Menu
+-----------------------------------
+1) Cleanup previous install
+2) Install PostgreSQL
+3) Install MinIO
+4) Install Ollama Nomic Model
+5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)
+6) Download SCDF Shell JAR
+7) Display the Management URLs
+q) Exit
+Select a step to run [1-7, q to quit]:
+```
+
+Each step can be run independently and as many times as needed. This is useful for debugging, development, or partial deployments.
+
 4. **(Optional) Deploy MinIO S3 server only**:
     ```sh
     ./minio_install_scdf.sh
