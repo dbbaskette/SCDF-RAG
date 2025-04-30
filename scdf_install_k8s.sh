@@ -2,49 +2,64 @@
 # scdf_install_k8s.sh: Installs SCDF on Kubernetes
 # Usage: ./scdf_install_k8s.sh > logs/scdf_install_k8s.log 2>&1
 
+# Source environment variables from scdf_env.properties
+if [ -f "$(dirname "$0")/scdf_env.properties" ]; then
+  set -a
+  . "$(dirname "$0")/scdf_env.properties"
+  set +a
+fi
+
+# --- Generate SCDF values file from environment variables (external PostgreSQL, chart-managed RabbitMQ) ---
+cat > resources/scdf-values.yaml <<EOF
+skipper:
+  env:
+    - name: MAVEN_LOCAL_REPO
+      value: /dataflow-maven-repo
+    - name: JAVA_OPTS
+      value: "-Duser.home=/dataflow-maven-repo -Dmaven.repo.local=/dataflow-maven-repo"
+  extraVolumeMounts:
+    - name: maven-repo
+      mountPath: /dataflow-maven-repo
+  extraVolumes:
+    - name: maven-repo
+      emptyDir: {}
+mariadb:
+  enabled: false
+postgresql:
+  enabled: false
+externalDatabase:
+  host: ${POSTGRES_RELEASE_NAME}
+  port: 5432
+  scheme: postgresql
+  driver: ${POSTGRES_DRIVER}
+  dataflow:
+    database: ${POSTGRES_DB}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+  skipper:
+    database: ${POSTGRES_DB}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+rabbitmq:
+  enabled: true
+networkPolicy:
+  enabled: false
+EOF
+
 # --- Step Counter (must be set before any function uses it) ---
 # Set STEP_TOTAL to the number of step_major calls in this script (do NOT include step 0)
-STEP_TOTAL=$(grep -c '^\s*step_major ' "$0")
+STEP_TOTAL=$(grep -c '^[[:space:]]*step_major ' "$0")
 STEP_COUNTER=0
-
-# --- Prerequisite Checks (Step 0 of N) ---
-printf -v STEP_0_FMT "\033[1;32m[0/%d] Checking prerequisites (kubectl, helm, yq) ...\033[0m" "$STEP_TOTAL"
-echo -e "$STEP_0_FMT"
-REQUIRED_TOOLS=(kubectl helm yq)
-MISSING_TOOLS=()
-for tool in "${REQUIRED_TOOLS[@]}"; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    MISSING_TOOLS+=("$tool")
-  fi
-done
-if [ ${#MISSING_TOOLS[@]} -ne 0 ]; then
-  echo "[ERROR] The following required tools are missing: ${MISSING_TOOLS[*]}" >&2
-  echo "Please install them before running this script. See README.md for instructions." >&2
-  exit 1
-fi
 
 # --- Logging Setup ---
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
 LOGFILE="$LOGDIR/scdf_install_k8s.log"
 
-# --- Source environment variables ---
-if [ -f "./scdf_env.properties" ]; then
-  set -o allexport
-  source ./scdf_env.properties
-  set +o allexport
-else
-  echo "[ERROR] scdf_env.properties not found! Please create it or check the path." >&2
-  exit 1
-fi
-
-# Set default SCDF Shell JAR location and download URL if not set
-: "${SHELL_JAR:=spring-cloud-dataflow-shell.jar}"
-: "${SHELL_URL:=https://repo1.maven.org/maven2/org/springframework/cloud/spring-cloud-dataflow-shell/2.11.1/spring-cloud-dataflow-shell-2.11.1.jar}"
-
 # --- Namespace Setup ---
 NAMESPACE="${NAMESPACE:-scdf}"
-POSTGRES_RELEASE_NAME="${POSTGRES_RELEASE_NAME:-scdf-postgres}"
+POSTGRES_RELEASE_NAME="${POSTGRES_RELEASE_NAME:-scdf-postgresql}"
+RABBITMQ_RELEASE_NAME="${RABBITMQ_RELEASE_NAME:-scdf-rabbitmq}"
 
 # --- Utility Functions ---
 # Print an informational message to log file only (does not increment step counter)
@@ -57,7 +72,7 @@ status() {
 }
 # Print a completion message in [N/TOTAL] format, to terminal and log
 step_done() {
-  echo -e "\033[1;36m[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST\033[0m" >&2
+  echo -e "\033[1;36m[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST\033[0m"
   # echo "[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST" >>"$LOGFILE"
 }
 # Print a red error message to terminal
@@ -196,290 +211,151 @@ print_management_urls() {
   } | tee -a "$LOGFILE"
 }
 
-# --- Constants and Flags ---
-SKIP_INSTALL=0
-INSTALL_MODELS_ONLY=0
-PRINT_URLS_ONLY=0
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --skip-install)
-      SKIP_INSTALL=1
-      shift
-      ;;
-    --models-only)
-      INSTALL_MODELS_ONLY=1
-      shift
-      ;;
-    --print-urls)
-      PRINT_URLS_ONLY=1
-      shift
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
+# --- Namespace Utility ---
+ensure_namespace() {
+  if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    echo "[INFO] Creating namespace $NAMESPACE..." | tee -a "$LOGFILE"
+    kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1
+  else
+    echo "[INFO] Namespace $NAMESPACE already exists, skipping creation." >>"$LOGFILE"
+  fi
+}
 
-# --- Print URLs Only Mode ---
-if [[ $PRINT_URLS_ONLY -eq 1 ]]; then
-  print_management_urls
-  exit 0
-fi
+# --- Cleanup Previous Install ---
+cleanup_previous_install() {
+  step_major "Cleaning up previous SCDF install (Helm releases, PVCs, PVs, and namespace)"
+  # Delete Helm releases
+  helm uninstall "$POSTGRES_RELEASE_NAME" -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
+  helm uninstall "$MINIO_RELEASE" -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
+  helm uninstall scdf -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
 
-# --- Main Install Logic ---
-if [[ $INSTALL_MODELS_ONLY -eq 1 ]]; then
-  # Only deploy the Ollama model service, skip cleanup and all other steps
-  step_major "Creating namespace..."
-  echo "[DEBUG] kubectl create namespace $NAMESPACE" >>"$LOGFILE"
-  kubectl create namespace "$NAMESPACE" 2>/dev/null || true
-  step_done "Namespace created."
-  step_major "Deploying Ollama nomic-embed-text model as a Kubernetes service and waiting for pod to be ready..."
-  kubectl apply -f ollama-nomic.yaml -n "$NAMESPACE" >>"$LOGFILE" 2>&1
-  wait_for_ready ollama-nomic 120
-  step_done "Ollama nomic-embed-text model deployed and ready."
-  exit 0
-fi
+  # Delete PVCs in the namespace
+  step_minor "Deleting all PersistentVolumeClaims in namespace $NAMESPACE..."
+  kubectl get pvc -n "$NAMESPACE" --no-headers | awk '{print $1}' | xargs -r -n1 kubectl delete pvc -n "$NAMESPACE" >>"$LOGFILE" 2>&1
 
-# --- Full install: cleanup and all services ---
-step_major "Cleaning up previous SCDF installs..."
-echo "[DEBUG] helm uninstall scdf --namespace $NAMESPACE" >>"$LOGFILE"
-helm uninstall scdf --namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
-echo "[DEBUG] helm uninstall scdf-rabbitmq --namespace $NAMESPACE" >>"$LOGFILE"
-helm uninstall scdf-rabbitmq --namespace "$NAMESPACE" >>"$LOGFILE" 2>&1
-step_done "Previous SCDF installs cleaned up."
+  # Delete PVs that are Released or Bound to deleted PVCs (including MinIO PV)
+  step_minor "Deleting orphaned PersistentVolumes (including MinIO PV if present)..."
+  for pv in $(kubectl get pv --no-headers | awk '{print $1}'); do
+    status=$(kubectl get pv "$pv" -o jsonpath='{.status.phase}')
+    claim=$(kubectl get pv "$pv" -o jsonpath='{.spec.claimRef.namespace}')/$(kubectl get pv "$pv" -o jsonpath='{.spec.claimRef.name}')
+    if [[ "$status" == "Released" || "$claim" == "$NAMESPACE/" || "$claim" == "$NAMESPACE/" ]]; then
+      kubectl delete pv "$pv" >>"$LOGFILE" 2>&1 || true
+    fi
+  done
 
-# Wait for deployments to be deleted
-step_major "Waiting for SCDF and RabbitMQ deployments to be deleted..."
-for dep in scdf scdf-rabbitmq; do
-  for i in {1..30}; do
-    echo "[DEBUG] kubectl get deployment $dep -n $NAMESPACE" >>"$LOGFILE"
-    if ! kubectl get deployment "$dep" -n "$NAMESPACE" &>/dev/null; then
-      status "$dep deployment deleted."
+  # Delete namespace (will also delete any remaining resources)
+  kubectl delete namespace "$NAMESPACE" --ignore-not-found >>"$LOGFILE" 2>&1 || true
+
+  # Wait for namespace deletion to complete
+  for i in {1..60}; do
+    echo "[DEBUG] kubectl get namespace $NAMESPACE" >>"$LOGFILE"
+    if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
+      status "Namespace $NAMESPACE deleted."
       break
     fi
-    echo "[INFO] Waiting for $dep deployment to be deleted... [${i}/30]" >>"$LOGFILE"
+    echo "[INFO] Waiting for namespace $NAMESPACE to be deleted... [${i}/60]" >>"$LOGFILE"
     sleep 2
   done
-done
-step_done "SCDF and RabbitMQ deployments deleted."
+  step_done "Cleanup complete."
+}
 
-step_major "Deleting namespace..."
-echo "[DEBUG] kubectl delete namespace $NAMESPACE" >>"$LOGFILE"
-kubectl delete namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
-for i in {1..60}; do
-  echo "[DEBUG] kubectl get namespace $NAMESPACE" >>"$LOGFILE"
-  if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
-    status "Namespace $NAMESPACE deleted."
-    step_done "Namespace deleted."
-    break
+# --- Helper function to check if a Helm release exists in the namespace ---
+is_release_installed() {
+  local release_name="$1"
+  local namespace="$2"
+  helm status "$release_name" --namespace "$namespace" >/dev/null 2>&1
+}
+
+# --- Install PostgreSQL as a standalone function ---
+install_postgresql() {
+  ensure_namespace
+  if is_release_installed "$POSTGRES_RELEASE_NAME" "$NAMESPACE"; then
+    step_minor "PostgreSQL already installed. Skipping."
+    return 0
   fi
-  echo "[INFO] Waiting for namespace $NAMESPACE to be deleted... [${i}/60]" >>"$LOGFILE"
-  sleep 2
-done
+  step_major "Install PostgreSQL"
+  helm upgrade --install "$POSTGRES_RELEASE_NAME" bitnami/postgresql \
+    --namespace "$NAMESPACE" \
+    --set auth.username="$POSTGRES_USER" \
+    --set auth.password="$POSTGRES_PASSWORD" \
+    --set auth.database="$POSTGRES_DB" \
+    --set image.tag="$POSTGRES_IMAGE_TAG" \
+    --set service.type=NodePort \
+    --set service.nodePort="$POSTGRES_NODEPORT" \
+    --wait
+  wait_for_ready postgresql 300
+}
 
-step_major "Creating namespace..."
-echo "[DEBUG] kubectl create namespace $NAMESPACE" >>"$LOGFILE"
-kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
-step_done "Namespace created."
+# --- SCDF Install ---
+install_scdf() {
+  ensure_namespace
+  install_postgresql
+  step_major "Installing Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ), and waiting for pods to be ready..."
+  : "${SCDF_SERVER_PORT:=$SCDF_SERVER_PORT}"
+  SCDF_SERVER_URL="http://localhost:$SCDF_SERVER_PORT"
+  export SCDF_SERVER_URL
+  helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-cloud-dataflow \
+    --namespace "$NAMESPACE" \
+    --values resources/scdf-values.yaml \
+    --set server.service.type=NodePort \
+    --set server.service.nodePort="$SCDF_SERVER_PORT" >>"$LOGFILE" 2>&1
+  wait_for_ready scdf-spring-cloud-dataflow-server 300
+  wait_for_ready scdf-spring-cloud-dataflow-skipper 300
+  step_done "Spring Cloud Data Flow and Skipper installed and ready."
+}
 
-# --- Ollama with nomic-embed-text (K8s) ---
-step_major "Deploying Ollama nomic-embed-text model as a Kubernetes service and waiting for pod to be ready..."
-kubectl apply -f ollama-nomic.yaml -n "$NAMESPACE" >>"$LOGFILE" 2>&1
-wait_for_ready ollama-nomic 120
-step_done "Ollama nomic-embed-text model deployed and ready."
+# --- Interactive Menu for --test ---
+show_menu() {
+  echo
+  echo "SCDF Install Script Test Menu"
+  echo "-----------------------------------"
+  echo "1) Cleanup previous install"
+  echo "2) Install PostgreSQL"
+  echo "3) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
+  echo "4) Download SCDF Shell JAR"
+  echo "5) Display the Management URLs"
+  echo "q) Exit"
+  echo -n "Select a step to run [1-5, q to quit]: "
+}
 
-echo "[INFO] Running full install steps..." >>"$LOGFILE"
-
-# --- Helm Repo and RabbitMQ ---
-step_major "Adding/updating Helm repo..."
-echo "[DEBUG] helm repo add bitnami https://charts.bitnami.com/bitnami" >>"$LOGFILE"
-helm repo add bitnami https://charts.bitnami.com/bitnami >>"$LOGFILE" 2>&1 || true
-echo "[DEBUG] helm repo update" >>"$LOGFILE"
-helm repo update >>"$LOGFILE" 2>&1
-step_done "Helm repo added/updated."
-
-step_major "Installing RabbitMQ and waiting for pod to be ready..."
-helm upgrade --install "$RABBITMQ_RELEASE_NAME" bitnami/rabbitmq \
-  --namespace "$NAMESPACE" \
-  --set auth.username="$RABBITMQ_USER" \
-  --set auth.password="$RABBITMQ_PASSWORD" \
-  --set auth.erlangCookie="$RABBITMQ_ERLANG_COOKIE" \
-  --set persistence.enabled=false \
-  --set service.type=NodePort \
-  --set service.nodePorts.amqp="$RABBITMQ_NODEPORT_AMQP" \
-  --set service.nodePorts.manager="$RABBITMQ_NODEPORT_MANAGER" \
-  >>"$LOGFILE" 2>&1 || true
-wait_for_ready rabbitmq 300
-step_done "RabbitMQ installed and ready."
-
-# --- PostgreSQL with pgvector ---
-step_major "Installing PostgreSQL with pgvector extension via Helm and waiting for pod to be ready..."
-
-# Variable sanity check for required PostgreSQL variables
-REQUIRED_VARS=(POSTGRES_RELEASE_NAME POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_IMAGE_TAG POSTGRES_NODEPORT)
-MISSING=()
-for var in "${REQUIRED_VARS[@]}"; do
-  if [[ -z "${!var}" ]]; then
-    MISSING+=("$var")
-  fi
-done
-if (( ${#MISSING[@]} > 0 )); then
-  echo "[ERROR] The following required PostgreSQL variables are missing or empty:" >>"$LOGFILE"
-  for var in "${MISSING[@]}"; do
-    echo "  $var='${!var}'" >>"$LOGFILE"
+if [[ "$1" == "--test" ]]; then
+  while true; do
+    show_menu
+    read -r choice
+    case $choice in
+      1)
+        cleanup_previous_install
+        ;;
+      2)
+        install_postgresql
+        ;;
+      3)
+        install_scdf
+        ;;
+      4)
+        download_shell_jar
+        ;;
+      5)
+        print_management_urls
+        ;;
+      q|Q)
+        echo "Exiting."
+        exit 0
+        ;;
+      *)
+        echo "Invalid option. Please select 1-5 or q to quit."
+        ;;
+    esac
+    echo
+    echo "--- Step complete. Return to menu. ---"
   done
-  exit 1
+  exit 0
 fi
 
-# Create ConfigMap for pgvector init script (idempotent)
-kubectl create configmap pgvector-init-script \
-  --from-literal=init.sql="CREATE EXTENSION IF NOT EXISTS vector;" \
-  -n "$NAMESPACE" 2>>"$LOGFILE" 1>>"$LOGFILE" || kubectl create configmap pgvector-init-script \
-  --from-literal=init.sql="CREATE EXTENSION IF NOT EXISTS vector;" \
-  -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - 2>>"$LOGFILE" 1>>"$LOGFILE"
-
-helm repo add bitnami https://charts.bitnami.com/bitnami >>"$LOGFILE" 2>&1 || true
-helm repo update >>"$LOGFILE" 2>&1
-
-# Helm dry-run for debugging
-helm upgrade --install "$POSTGRES_RELEASE_NAME" bitnami/postgresql \
-  --namespace "$NAMESPACE" \
-  --set postgresqlUsername="$POSTGRES_USER" \
-  --set postgresqlPassword="$POSTGRES_PASSWORD" \
-  --set postgresqlDatabase="$POSTGRES_DB" \
-  --set primary.initdb.scriptsConfigMap=pgvector-init-script \
-  --set image.tag="$POSTGRES_IMAGE_TAG" \
-  --set service.type=NodePort \
-  --set service.nodePorts.postgresql="$POSTGRES_NODEPORT" \
-  --debug --dry-run >>"$LOGFILE" 2>&1
-
-# Actual install with error handling
-helm upgrade --install "$POSTGRES_RELEASE_NAME" bitnami/postgresql \
-  --namespace "$NAMESPACE" \
-  --values resources/scdf-values.yaml \
-  --set postgresqlUsername="$POSTGRES_USER" \
-  --set postgresqlPassword="$POSTGRES_PASSWORD" \
-  --set postgresqlDatabase="$POSTGRES_DB" \
-  --set primary.initdb.scriptsConfigMap=pgvector-init-script \
-  --set image.tag="$POSTGRES_IMAGE_TAG" \
-  --set service.type=NodePort \
-  --set service.nodePorts.postgresql="$POSTGRES_NODEPORT" \
-  >>"$LOGFILE" 2>&1 || true
-wait_for_ready postgresql 300
-step_done "PostgreSQL with pgvector installed and ready."
-
-# --- SCDF Install: Install and Wait for Server and Skipper ---
-step_major "Installing Spring Cloud Data Flow (includes Skipper and MariaDB), and waiting for pods to be ready..."
-: "${SCDF_SERVER_PORT:=30080}"
-SCDF_SERVER_URL="http://localhost:$SCDF_SERVER_PORT"
-export SCDF_SERVER_URL
-helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-cloud-dataflow \
-  --namespace "$NAMESPACE" \
-  --values resources/scdf-values.yaml \
-  --set rabbitmq.enabled=false \
-  --set rabbitmq.host=scdf-rabbitmq \
-  --set rabbitmq.username=user \
-  --set rabbitmq.password=bitnami \
-  --set server.service.type=NodePort \
-  --set server.service.nodePort="$SCDF_SERVER_PORT" >>"$LOGFILE" 2>&1
-wait_for_ready scdf-spring-cloud-dataflow-server 300
-wait_for_ready scdf-spring-cloud-dataflow-skipper 300
-step_done "Spring Cloud Data Flow and Skipper installed and ready."
-
-# --- SCDF Shell ---
-echo "[DEBUG] About to download_shell_jar" >>"$LOGFILE"
+# --- Full Install Flow ---
+cleanup_previous_install
+install_scdf
 download_shell_jar
-
-# --- Register Default Apps as Maven Artifacts ---
-echo "[DEBUG] About to register_default_apps_maven" >>"$LOGFILE"
-register_default_apps_maven >>"$LOGFILE" 2>&1
-
-# --- Post-Install Verification and Management Steps ---
-step_major "Querying registered apps for verification..."
-curl -s "$SCDF_SERVER_URL/apps" > registered_apps.json
-cat registered_apps.json >>"$LOGFILE"
-step_done "Registered apps have been logged to registered_apps.json and $LOGFILE."
-
-# --- MinIO Install ---
-install_minio() {
-  step_major "Installing MinIO S3-compatible storage..."
-  step_minor "Cleaning up old MinIO PVC and PV if they exist..."
-  echo "[DEBUG] kubectl delete pvc $MINIO_PVC -n $NAMESPACE --ignore-not-found" >>"$LOGFILE"
-  kubectl delete pvc $MINIO_PVC -n $NAMESPACE --ignore-not-found >>"$LOGFILE" 2>&1
-  echo "[DEBUG] kubectl delete pv minio-pv --ignore-not-found" >>"$LOGFILE"
-  kubectl delete pv minio-pv --ignore-not-found >>"$LOGFILE" 2>&1
-
-  step_minor "Applying MinIO PersistentVolume and PersistentVolumeClaim YAML..."
-  mkdir -p resources
-  SOURCE_DOCS_DIR="${MINIO_SOURCE_DIR:-$(pwd)/sourceDocs}"
-  mkdir -p "$SOURCE_DOCS_DIR"
-  cat > resources/minio-pv-pvc.yaml <<EOF
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: minio-pv
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  hostPath:
-    path: $SOURCE_DOCS_DIR
-  storageClassName: hostpath
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: $MINIO_PVC
-  namespace: $NAMESPACE
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  volumeName: minio-pv
-EOF
-  echo "[DEBUG] kubectl apply -f resources/minio-pv-pvc.yaml" >>"$LOGFILE"
-  kubectl apply -f resources/minio-pv-pvc.yaml >>"$LOGFILE" 2>&1
-
-  step_minor "Adding Bitnami Helm repo and updating..."
-  echo "[DEBUG] helm repo add bitnami https://charts.bitnami.com/bitnami" >>"$LOGFILE"
-  helm repo add bitnami https://charts.bitnami.com/bitnami >>"$LOGFILE" 2>&1 || true
-  echo "[DEBUG] helm repo update" >>"$LOGFILE"
-  helm repo update >>"$LOGFILE" 2>&1
-
-  step_minor "Installing MinIO via Helm using static hostPath PV..."
-  echo "[DEBUG] helm upgrade --install $MINIO_RELEASE bitnami/minio --namespace $NAMESPACE --set persistence.existingClaim=$MINIO_PVC --set mode=standalone --set resources.requests.memory=512Mi --set resources.requests.cpu=250m --set service.type=NodePort --set service.nodePorts.api=$MINIO_API_PORT --set service.nodePorts.console=$MINIO_CONSOLE_PORT" >>"$LOGFILE"
-  helm upgrade --install $MINIO_RELEASE bitnami/minio \
-    --namespace $NAMESPACE \
-    --set persistence.existingClaim=$MINIO_PVC \
-    --set mode=standalone \
-    --set resources.requests.memory=512Mi \
-    --set resources.requests.cpu=250m \
-    --set service.type=NodePort \
-    --set service.nodePorts.api=$MINIO_API_PORT \
-    --set service.nodePorts.console=$MINIO_CONSOLE_PORT >>"$LOGFILE" 2>&1
-
-  step_minor "Waiting for MinIO pod to be ready..."
-  echo "[DEBUG] wait_for_ready minio 300" >>"$LOGFILE"
-  wait_for_ready minio 300
-  # Print MinIO management (console) address
-  # macOS does not support 'hostname -I', so use 'ipconfig getifaddr' for primary interface
-  if [[ "$(uname)" == "Darwin" ]]; then
-    MINIO_HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
-  else
-    MINIO_HOST_IP=$(hostname -I | awk '{print $1}')
-  fi
-  MINIO_MGMT_URL="http://$MINIO_HOST_IP:${MINIO_CONSOLE_PORT}"
-  echo "MinIO Management Console: $MINIO_MGMT_URL" >>"$LOGFILE"
-  step_done "MinIO installation complete."
-}
-install_minio
-
-# --- Print Management URLs ---
 print_management_urls
 
 exit 0
-
-# --- END CLEANUP ---

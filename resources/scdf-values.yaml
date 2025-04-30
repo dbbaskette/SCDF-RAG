@@ -1,0 +1,33 @@
+skipper:
+  env:
+    - name: MAVEN_LOCAL_REPO
+      value: /dataflow-maven-repo
+    - name: JAVA_OPTS
+      value: "-Duser.home=/dataflow-maven-repo -Dmaven.repo.local=/dataflow-maven-repo"
+  extraVolumeMounts:
+    - name: maven-repo
+      mountPath: /dataflow-maven-repo
+  extraVolumes:
+    - name: maven-repo
+      emptyDir: {}
+mariadb:
+  enabled: false
+postgresql:
+  enabled: false
+externalDatabase:
+  host: scdf-postgresql
+  port: 5432
+  scheme: postgresql
+  driver: org.postgresql.Driver
+  dataflow:
+    database: scdf-db
+    username: user
+    password: bitnami
+  skipper:
+    database: scdf-db
+    username: user
+    password: bitnami
+rabbitmq:
+  enabled: true
+networkPolicy:
+  enabled: false
