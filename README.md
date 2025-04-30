@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/logo.png" alt="SCDF-RAG Logo" width="300"/>
+</p>
+
 # Spring Cloud Data Flow on Kubernetes - Automated Installer
 
 This project provides a fully automated shell script to deploy [Spring Cloud Data Flow (SCDF)](https://dataflow.spring.io/) on a local or cloud Kubernetes cluster, using RabbitMQ, PostgreSQL, MinIO, and the Ollama Nomic model as backing services. The script handles all setup, error checking, and default application registration for a seamless developer experience.
@@ -88,6 +92,7 @@ Each step can be run independently and as many times as needed. This is useful f
 - MinIO install is restored and part of the default install.
 - All INFO and STATUS messages are now logged only; the terminal shows only step progress, completion, and management URLs.
 - All NodePorts and management URLs are dynamically generated and shown at the end of the install.
+- **RabbitMQ NodePort configuration:** The installer now sets RabbitMQ's AMQP and management UI NodePorts from your `scdf_env.properties` file, ensuring your chosen ports are always used.
 
 ---
 
