@@ -9,3 +9,5 @@ __pycache__/
 .env
 .history
 sourceDocs/
+instructions.txt
+resources/scdf-values.yaml
