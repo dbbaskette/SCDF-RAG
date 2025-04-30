@@ -2,6 +2,7 @@
 # scdf_install_k8s.sh: Installs SCDF on Kubernetes
 # Usage: ./scdf_install_k8s.sh > logs/scdf_install_k8s.log 2>&1
 
+
 # Source environment variables from scdf_env.properties
 if [ -f "$(dirname "$0")/scdf_env.properties" ]; then
   set -a
@@ -60,20 +61,30 @@ LOGFILE="$LOGDIR/scdf_install_k8s.log"
 NAMESPACE="${NAMESPACE:-scdf}"
 POSTGRES_RELEASE_NAME="${POSTGRES_RELEASE_NAME:-scdf-postgresql}"
 RABBITMQ_RELEASE_NAME="${RABBITMQ_RELEASE_NAME:-scdf-rabbitmq}"
+MINIO_RELEASE="${MINIO_RELEASE:-scdf-minio}"
+MINIO_PV="${MINIO_PV:-scdf-minio-pv}"
+MINIO_PVC="${MINIO_PVC:-scdf-minio-pvc}"
+MINIO_API_PORT="${MINIO_API_PORT:-30081}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-30082}"
+OLLAMA_NODEPORT="${OLLAMA_NODEPORT:-31434}"
 
 # --- Utility Functions ---
-# Print an informational message to log file only (does not increment step counter)
+# Print an informational message to log file only, indented (does not increment step counter)
 step_minor() {
-  echo "    [INFO] $1" >>"$LOGFILE"
+  echo "      [INFO] $1" >>"$LOGFILE"
 }
-# Print a cyan status message to log file only
+# Print a cyan status message to log file only, indented
 status() {
-  echo "    [STATUS] $1" >>"$LOGFILE"
+  echo "      [STATUS] $1" >>"$LOGFILE"
 }
 # Print a completion message in [N/TOTAL] format, to terminal and log
 step_done() {
-  echo -e "\033[1;36m[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST\033[0m"
-  # echo "[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST" >>"$LOGFILE"
+  # Print a completion message in [N/TOTAL] format, to terminal and log
+  if [[ -n "$STEP_LAST" ]]; then
+    echo -e "\033[1;36m[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST\033[0m"
+    echo "[$STEP_COUNTER/$STEP_TOTAL] COMPLETE: $STEP_LAST" >>"$LOGFILE"
+    STEP_LAST=""
+  fi
 }
 # Print a red error message to terminal
 err() { echo -e "\033[1;31m$1\033[0m" >&2; }
@@ -103,38 +114,28 @@ wait_for_ready() {
       LABEL_SELECTOR="app.kubernetes.io/instance=scdf-rabbitmq"
     # SCDF server
     elif [[ "$NAME_SUBSTR" == "scdf-spring-cloud-dataflow-server" ]]; then
-      LABEL_SELECTOR="app.kubernetes.io/instance=scdf,app.kubernetes.io/component=server"
+      LABEL_SELECTOR="app.kubernetes.io/component=server"
     # SCDF skipper
     elif [[ "$NAME_SUBSTR" == "scdf-spring-cloud-dataflow-skipper" ]]; then
-      LABEL_SELECTOR="app.kubernetes.io/instance=scdf,app.kubernetes.io/component=skipper"
-    else
-      LABEL_SELECTOR="app.kubernetes.io/instance=$NAME_SUBSTR"
+      LABEL_SELECTOR="app.kubernetes.io/component=skipper"
     fi
   fi
-  echo "[DEBUG] wait_for_ready: NAME_SUBSTR=$NAME_SUBSTR, TIMEOUT=$TIMEOUT, LABEL_SELECTOR=$LABEL_SELECTOR" >>"$LOGFILE"
-  DEBUG_PRINTED=0
+
   for ((i=0; i<TIMEOUT; i++)); do
-    if [ $DEBUG_PRINTED -eq 0 ]; then
-      echo "[DEBUG] kubectl get pods -n $NAMESPACE -l $LABEL_SELECTOR -o jsonpath='{.items[0].metadata.name}'" >>"$LOGFILE"
-      echo "[DEBUG] kubectl get pods -n $NAMESPACE -l $LABEL_SELECTOR -o jsonpath='{.items[0].status.containerStatuses[0].ready}'" >>"$LOGFILE"
-      echo "[DEBUG] kubectl get pods -n $NAMESPACE -l $LABEL_SELECTOR -o jsonpath='{.items[0].status.phase}'" >>"$LOGFILE"
-      DEBUG_PRINTED=1
-    fi
-    POD=$(kubectl get pods -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    READY=$(kubectl get pods -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null)
-    PHASE=$(kubectl get pods -n "$NAMESPACE" -l "$LABEL_SELECTOR" -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
-    if [ -z "$POD" ]; then
-      status "Waiting for pod matching label '$LABEL_SELECTOR' to appear... ($i/$TIMEOUT)"
+    pod=$(kubectl get pods -n "$NAMESPACE" -l "$LABEL_SELECTOR" --no-headers 2>>"$LOGFILE" | awk '/Running|Pending|ContainerCreating/ {print $1; exit}')
+    if [[ -z "$pod" ]]; then
       sleep 1
       continue
     fi
-    status "Waiting for pod '$POD': phase=$PHASE, ready=$READY ($i/$TIMEOUT)"
-    [[ "$PHASE" == "Running" && "$READY" == true ]] && return 0
+    phase=$(kubectl get pod "$pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>>"$LOGFILE")
+    ready=$(kubectl get pod "$pod" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].ready}' 2>>"$LOGFILE")
+    if [[ "$phase" == "Running" && "$ready" == "true" ]]; then
+      break
+    fi
+    # Only log status, don't print to terminal
+    status "Waiting for pod '$pod': phase=$phase, ready=$ready ($i/$TIMEOUT)"
     sleep 1
   done
-  err "Pod matching label '$LABEL_SELECTOR' not ready after $TIMEOUT seconds."
-  echo "[ERROR] Pod matching label '$LABEL_SELECTOR' not ready after $TIMEOUT seconds." >>"$LOGFILE"
-  return 1
 }
 
 # Download the SCDF Shell JAR if not present
@@ -194,7 +195,7 @@ print_management_urls() {
     echo "RabbitMQ AMQP:     localhost:$RABBITMQ_NODEPORT_AMQP [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
     echo "PostgreSQL:        localhost:$POSTGRES_NODEPORT [$POSTGRES_USER/$POSTGRES_PASSWORD, DB: $POSTGRES_DB]"
     echo "Ollama (nomic):    http://ollama-nomic.$NAMESPACE.svc.cluster.local:11434 [internal K8s]"
-    echo "Ollama (nomic, local): http://127.0.0.1:11434 [if port-forwarded]"
+    echo "Ollama (nomic, local): http://127.0.0.1:$OLLAMA_NODEPORT [if port-forwarded]"
     MINIO_USER=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-user}" | base64 --decode 2>/dev/null)
     MINIO_PASS=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-password}" | base64 --decode 2>/dev/null)
     if [[ -n "$MINIO_USER" && -n "$MINIO_PASS" ]]; then
@@ -214,10 +215,10 @@ print_management_urls() {
 # --- Namespace Utility ---
 ensure_namespace() {
   if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-    echo "[INFO] Creating namespace $NAMESPACE..." | tee -a "$LOGFILE"
+    step_minor "Creating namespace $NAMESPACE..."
     kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1
   else
-    echo "[INFO] Namespace $NAMESPACE already exists, skipping creation." >>"$LOGFILE"
+    echo "      [INFO] Namespace $NAMESPACE already exists, skipping creation." >>"$LOGFILE"
   fi
 }
 
@@ -226,16 +227,17 @@ cleanup_previous_install() {
   step_major "Cleaning up previous SCDF install (Helm releases, PVCs, PVs, and namespace)"
   # Delete Helm releases
   helm uninstall "$POSTGRES_RELEASE_NAME" -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
+  helm uninstall "$RABBITMQ_RELEASE_NAME" -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
   helm uninstall "$MINIO_RELEASE" -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
   helm uninstall scdf -n "$NAMESPACE" >>"$LOGFILE" 2>&1 || true
 
   # Delete PVCs in the namespace
   step_minor "Deleting all PersistentVolumeClaims in namespace $NAMESPACE..."
-  kubectl get pvc -n "$NAMESPACE" --no-headers | awk '{print $1}' | xargs -r -n1 kubectl delete pvc -n "$NAMESPACE" >>"$LOGFILE" 2>&1
+  kubectl get pvc -n "$NAMESPACE" --no-headers 2>>"$LOGFILE" | awk '{print $1}' | xargs -r -n1 kubectl delete pvc -n "$NAMESPACE" >>"$LOGFILE" 2>&1
 
   # Delete PVs that are Released or Bound to deleted PVCs (including MinIO PV)
   step_minor "Deleting orphaned PersistentVolumes (including MinIO PV if present)..."
-  for pv in $(kubectl get pv --no-headers | awk '{print $1}'); do
+  for pv in $(kubectl get pv --no-headers 2>>"$LOGFILE" | awk '{print $1}'); do
     status=$(kubectl get pv "$pv" -o jsonpath='{.status.phase}')
     claim=$(kubectl get pv "$pv" -o jsonpath='{.spec.claimRef.namespace}')/$(kubectl get pv "$pv" -o jsonpath='{.spec.claimRef.name}')
     if [[ "$status" == "Released" || "$claim" == "$NAMESPACE/" || "$claim" == "$NAMESPACE/" ]]; then
@@ -282,8 +284,78 @@ install_postgresql() {
     --set image.tag="$POSTGRES_IMAGE_TAG" \
     --set service.type=NodePort \
     --set service.nodePort="$POSTGRES_NODEPORT" \
-    --wait
+    --wait >>"$LOGFILE" 2>&1
   wait_for_ready postgresql 300
+  step_done "PostgreSQL installed and ready."
+}
+
+# --- Install MinIO as a standalone function ---
+install_minio() {
+  ensure_namespace
+  if is_release_installed "$MINIO_RELEASE" "$NAMESPACE"; then
+    step_minor "MinIO already installed. Skipping."
+    return 0
+  fi
+  step_major "Install MinIO"
+  helm upgrade --install "$MINIO_RELEASE" bitnami/minio \
+    --namespace "$NAMESPACE" \
+    --set persistence.enabled=true \
+    --set persistence.size=10Gi \
+    --set mode=standalone \
+    --set resources.requests.memory=512Mi \
+    --set resources.requests.cpu=250m \
+    --set service.type=NodePort \
+    --set service.nodePorts.api="$MINIO_API_PORT" \
+    --set service.nodePorts.console="$MINIO_CONSOLE_PORT" \
+    --wait >>"$LOGFILE" 2>&1
+  wait_for_ready "$MINIO_RELEASE" 300
+  step_done "MinIO installed and ready."
+}
+
+# --- Install Ollama Nomic Model as a standalone function ---
+install_ollama_nomic() {
+  step_major "Install Ollama Nomic Model (nomic-embed-text)"
+  mkdir -p resources
+  cat > resources/ollama-nomic.yaml <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-nomic
+  namespace: $NAMESPACE
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama-nomic
+  template:
+    metadata:
+      labels:
+        app: ollama-nomic
+    spec:
+      containers:
+        - name: ollama
+          image: contentaware/nomic-embed-text:latest
+          ports:
+            - containerPort: 11434
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-nomic
+  namespace: $NAMESPACE
+spec:
+  selector:
+    app: ollama-nomic
+  ports:
+    - protocol: TCP
+      port: 11434
+      targetPort: 11434
+      nodePort: $OLLAMA_NODEPORT
+  type: NodePort
+EOF
+  kubectl apply -f resources/ollama-nomic.yaml >>"$LOGFILE" 2>&1
+  wait_for_ready ollama-nomic 180
+  step_done "Ollama Nomic model deployed."
 }
 
 # --- SCDF Install ---
@@ -302,6 +374,7 @@ install_scdf() {
   wait_for_ready scdf-spring-cloud-dataflow-server 300
   wait_for_ready scdf-spring-cloud-dataflow-skipper 300
   step_done "Spring Cloud Data Flow and Skipper installed and ready."
+  install_ollama_nomic
 }
 
 # --- Interactive Menu for --test ---
@@ -311,11 +384,13 @@ show_menu() {
   echo "-----------------------------------"
   echo "1) Cleanup previous install"
   echo "2) Install PostgreSQL"
-  echo "3) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
-  echo "4) Download SCDF Shell JAR"
-  echo "5) Display the Management URLs"
+  echo "3) Install MinIO"
+  echo "4) Install Ollama Nomic Model"
+  echo "5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
+  echo "6) Download SCDF Shell JAR"
+  echo "7) Display the Management URLs"
   echo "q) Exit"
-  echo -n "Select a step to run [1-5, q to quit]: "
+  echo -n "Select a step to run [1-7, q to quit]: "
 }
 
 if [[ "$1" == "--test" ]]; then
@@ -330,12 +405,18 @@ if [[ "$1" == "--test" ]]; then
         install_postgresql
         ;;
       3)
-        install_scdf
+        install_minio
         ;;
       4)
-        download_shell_jar
+        install_ollama_nomic
         ;;
       5)
+        install_scdf
+        ;;
+      6)
+        download_shell_jar
+        ;;
+      7)
         print_management_urls
         ;;
       q|Q)
@@ -343,7 +424,7 @@ if [[ "$1" == "--test" ]]; then
         exit 0
         ;;
       *)
-        echo "Invalid option. Please select 1-5 or q to quit."
+        echo "Invalid option. Please select 1-7 or q to quit."
         ;;
     esac
     echo
@@ -355,6 +436,7 @@ fi
 # --- Full Install Flow ---
 cleanup_previous_install
 install_scdf
+install_minio
 download_shell_jar
 print_management_urls
 

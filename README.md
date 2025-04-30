@@ -1,44 +1,20 @@
 # Spring Cloud Data Flow on Kubernetes - Automated Installer
 
-This project provides a fully automated shell script to deploy [Spring Cloud Data Flow (SCDF)](https://dataflow.spring.io/) on a local or cloud Kubernetes cluster, using RabbitMQ and MariaDB as backing services. The script handles all setup, error checking, and default application registration for a seamless developer experience.
+This project provides a fully automated shell script to deploy [Spring Cloud Data Flow (SCDF)](https://dataflow.spring.io/) on a local or cloud Kubernetes cluster, using RabbitMQ, PostgreSQL, MinIO, and the Ollama Nomic model as backing services. The script handles all setup, error checking, and default application registration for a seamless developer experience.
 
 ---
 
 ## Features
 
-- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, and MariaDB via Helm.
+- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama Nomic via Helm and dynamic YAML generation.
 - **MinIO S3 integration**: Easily deploy a MinIO S3-compatible server for object storage in the SCDF namespace.
+- **Ollama Nomic embedding model**: Installs the Nomic embedding model for use with SCDF pipelines, exposed via NodePort for external access.
 - **Automatic cleanup**: Removes previous installations and verifies deletion before proceeding.
-- **NodePort exposure**: All management UIs are available on your localhost for easy access.
+- **NodePort exposure**: All management UIs and Ollama API are available on your localhost for easy access.
 - **Default app registration**: Downloads and registers the latest default RabbitMQ stream apps via the SCDF REST API.
 - **Robust error handling**: Logs all actions and errors to the `logs/` directory for easy troubleshooting.
+- **Minimal terminal output**: Only step progress, completion, and management URLs are printed to the terminal; all INFO and STATUS details are in the log file.
 - **Fully commented and maintainable**: The scripts are easy to follow and modify.
-
----
-
-## PDF Preprocessor Microservice
-
-The `pdf-preprocessor` is a Spring Cloud Stream processor application that extracts text from PDF files received via the SCDF stream pipeline.
-
-### How it works
-- **Input:** Receives messages with the contents of a PDF file as a byte array (`byte[]`) from the message broker (RabbitMQ).
-- **Processing:**
-    1. Writes the byte array to a temporary file.
-    2. Uses Apache PDFBox to extract all text from the PDF.
-    3. Builds a new message with the extracted text as the payload, preserving all original headers and adding a `filename` header.
-    4. Deletes the temporary file after processing.
-- **Error Handling:** If PDF extraction fails, the service emits an error message as the payload and logs the error.
-
-This microservice is intended to be used in a Spring Cloud Data Flow stream, typically downstream of an S3 source app that emits PDF files from an S3 bucket.
-
----
-
-## Prerequisites
-
-- **Kubernetes cluster** (e.g., Docker Desktop, Minikube, Kind, or cloud provider)
-- **kubectl** (configured to point to your cluster)
-- **Helm** (v3+ recommended)
-- **curl** and **bash**
 
 ---
 
@@ -49,36 +25,75 @@ This microservice is intended to be used in a Spring Cloud Data Flow stream, typ
     git clone <your-fork-or-this-repo-url>
     cd SCDF-RAG
     ```
-
 2. **Make the scripts executable**:
     ```sh
     chmod +x scdf_install_k8s.sh minio_install_scdf.sh create_stream.sh
     ```
-
 3. **Run the SCDF installer**:
     ```sh
     ./scdf_install_k8s.sh
     ```
-
-4. **(Optional) Deploy MinIO S3 server**:
+   - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and the Ollama Nomic model in one step.
+   - Minimal output will be shown in the terminal; see `logs/scdf_install_k8s.log` for details.
+4. **(Optional) Deploy MinIO S3 server only**:
     ```sh
     ./minio_install_scdf.sh
     ```
-
 5. **Deploy the PDF preprocessor stream**:
     ```sh
     ./create_stream.sh
     ```
-
 6. **Access the management UIs:**
     - SCDF Dashboard: [http://127.0.0.1:30080/dashboard](http://127.0.0.1:30080/dashboard)
     - RabbitMQ UI: [http://127.0.0.1:31672](http://127.0.0.1:31672) (user/bitnami)
     - RabbitMQ AMQP: `localhost:30672` (user/bitnami)
-    - MinIO Console: [http://127.0.0.1:9001](http://127.0.0.1:9001) (if enabled)
-
+    - MinIO Console: [http://127.0.0.1:30901](http://127.0.0.1:30901)
+    - Ollama Nomic: [http://127.0.0.1:31434](http://127.0.0.1:31434)
 7. **Check logs and troubleshoot:**
     - All actions and errors are logged in the `logs/` directory.
     - If you encounter issues, check these logs for details.
+
+---
+
+## Changes in this Version
+
+- Ollama Nomic model install is now automated and included in the main install flow.
+- MinIO install is restored and part of the default install.
+- All INFO and STATUS messages are now logged only; the terminal shows only step progress, completion, and management URLs.
+- All NodePorts and management URLs are dynamically generated and shown at the end of the install.
+
+---
+
+## Prerequisites
+
+Before running the SCDF install script or related automation, ensure the following tools are installed on your system:
+
+- `kubectl` (Kubernetes CLI)
+- `helm` (Helm package manager)
+- `yq` (YAML processor)
+
+### Install with Homebrew (macOS):
+
+```sh
+brew install kubectl helm yq
+```
+
+### Install on Linux (example):
+
+```sh
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+# helm
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# yq
+sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+sudo chmod +x /usr/local/bin/yq
+```
+
+If any of these tools are missing, the install script will exit with an error and prompt you to install them.
 
 ---
 
@@ -86,7 +101,7 @@ This microservice is intended to be used in a Spring Cloud Data Flow stream, typ
 
 - Cleans up any previous SCDF, RabbitMQ, and namespace resources, verifying deletion before continuing.
 - Installs RabbitMQ via Helm and waits for readiness.
-- Installs SCDF (with Skipper and MariaDB) via Helm and waits for readiness.
+- Installs SCDF (with Skipper and PostgreSQL) via Helm and waits for readiness.
 - Registers default stream apps as Docker images.
 - Exposes all UIs/services on NodePorts for localhost access.
 - Deploys a sample PDF preprocessor stream pipeline.
