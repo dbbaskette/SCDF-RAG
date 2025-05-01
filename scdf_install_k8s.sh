@@ -18,24 +18,51 @@ skipper:
       value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
       value: "-Duser.home=/dataflow-maven-repo"
+    - name: SPRING_CLOUD_SKIPPER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
+      value: "https://repo.maven.apache.org/maven2"
   extraVolumeMounts:
     - name: maven-repo
-      mountPath: /dataflow-maven-repo
+      mountPath: "/dataflow-maven-repo"
   extraVolumes:
     - name: maven-repo
       emptyDir: {}
+  service:
+    type: NodePort
+    nodePort: $SKIPPER_PORT
+  deployer:
+    kubernetes:
+      environmentVariables:
+        - name: MAVEN_REMOTE_REPOSITORIES
+          value: "https://repo.maven.apache.org/maven2"
+        - name: MAVEN_LOCAL_REPOSITORY
+          value: "/dataflow-maven-repo/.m2/repository"
+      volumeMounts:
+        - name: maven-repo
+          mountPath: "/dataflow-maven-repo"
 server:
   extraEnvVars:
     - name: MAVEN_LOCAL_REPOSITORY
       value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
       value: "-Duser.home=/dataflow-maven-repo"
+    - name: SPRING_CLOUD_DATAFLOW_SERVER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
+      value: "https://repo.maven.apache.org/maven2"
   extraVolumeMounts:
     - name: maven-repo
-      mountPath: /dataflow-maven-repo
+      mountPath: "/dataflow-maven-repo"
   extraVolumes:
     - name: maven-repo
       emptyDir: {}
+  deployer:
+    kubernetes:
+      environmentVariables:
+        - name: MAVEN_REMOTE_REPOSITORIES
+          value: "https://repo.maven.apache.org/maven2"
+        - name: MAVEN_LOCAL_REPOSITORY
+          value: "/dataflow-maven-repo/.m2/repository"
+      volumeMounts:
+        - name: maven-repo
+          mountPath: "/dataflow-maven-repo"
 mariadb:
   enabled: false
 postgresql:
@@ -75,7 +102,12 @@ STEP_COUNTER=0
 # --- Logging Setup ---
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-LOGFILE="$LOGDIR/scdf_install_k8s.log"
+NOW=$(date +"%Y%m%d-%H%M%S")
+CUR_LOG="$LOGDIR/current-scdfInstall.log"
+if [ -f "$CUR_LOG" ]; then
+  mv "$CUR_LOG" "$LOGDIR/scdfInstall-$NOW.log"
+fi
+LOGFILE="$CUR_LOG"
 
 # Log header for visual separation
 {
@@ -92,8 +124,13 @@ RABBITMQ_RELEASE_NAME="${RABBITMQ_RELEASE_NAME:-scdf-rabbitmq}"
 MINIO_RELEASE="${MINIO_RELEASE:-scdf-minio}"
 MINIO_PV="${MINIO_PV:-scdf-minio-pv}"
 MINIO_PVC="${MINIO_PVC:-scdf-minio-pvc}"
-MINIO_API_PORT="${MINIO_API_PORT:-30081}"
-MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-30082}"
+POSTGRES_NODEPORT="${POSTGRES_NODEPORT:-30432}"
+RABBITMQ_NODEPORT_AMQP="${RABBITMQ_NODEPORT_AMQP:-30672}"
+RABBITMQ_NODEPORT_MANAGER="${RABBITMQ_NODEPORT_MANAGER:-31672}"
+SCDF_SERVER_PORT="${SCDF_SERVER_PORT:-30080}"
+SKIPPER_PORT="${SKIPPER_PORT:-30081}"
+MINIO_API_PORT="${MINIO_API_PORT:-30900}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-30901}"
 OLLAMA_NODEPORT="${OLLAMA_NODEPORT:-31434}"
 
 # --- Utility Functions ---
@@ -394,11 +431,20 @@ install_scdf() {
   ensure_namespace
   install_postgresql
   step_major "Installing Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ), and waiting for pods to be ready..."
+  # When creating or updating the Skipper service, ensure the NodePort is set to $SKIPPER_PORT
+  # Example for Helm or kubectl usage:
+  #   --set skipper.service.type=NodePort \
+  #   --set skipper.service.nodePort=$SKIPPER_PORT
+  # or in a kubectl manifest patch:
+  #   nodePort: $SKIPPER_PORT
   helm upgrade --install scdf oci://registry-1.docker.io/bitnamicharts/spring-cloud-dataflow \
     --namespace "$NAMESPACE" \
     --values resources/scdf-values.yaml \
     --set server.service.type=NodePort \
-    --set server.service.nodePort="$SCDF_SERVER_PORT" >>"$LOGFILE" 2>&1
+    --set server.service.nodePort="$SCDF_SERVER_PORT" \
+    --set skipper.service.type=NodePort \
+    --set skipper.service.nodePort="$SKIPPER_PORT" \
+    >>"$LOGFILE" 2>&1
   wait_for_ready scdf-spring-cloud-dataflow-server 300
   wait_for_ready scdf-spring-cloud-dataflow-skipper 300
   step_done "Spring Cloud Data Flow and Skipper installed and ready."

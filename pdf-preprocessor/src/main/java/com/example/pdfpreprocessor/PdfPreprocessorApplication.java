@@ -47,7 +47,7 @@ public class PdfPreprocessorApplication {
      * </ol>
      */
     @Bean
-    public Function<Message<byte[]>, Message<String>> extractPdfText() {
+    public Function<Message<byte[]>, Message<String>> input() {
         return message -> {
             byte[] pdfBytes = message.getPayload();
             File tempFile = null;

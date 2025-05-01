@@ -61,7 +61,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-# Source shared environment variables first, then stream-specific overrides
+# Always source shared environment variables first, regardless of mode
 if [ -f ./scdf_env.properties ]; then
   source ./scdf_env.properties
 else
@@ -69,6 +69,7 @@ else
   exit 1
 fi
 
+# Source stream-specific overrides if present
 if [ -f ./create_stream.properties ]; then
   source ./create_stream.properties
 else
@@ -90,7 +91,12 @@ done
 
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-LOGFILE="$LOGDIR/create_stream.log"
+NOW=$(date +"%Y%m%d-%H%M%S")
+CUR_LOG="$LOGDIR/current-createStream.log"
+if [ -f "$CUR_LOG" ]; then
+  mv "$CUR_LOG" "$LOGDIR/createStream-$NOW.log"
+fi
+LOGFILE="$CUR_LOG"
 
 # Log header for visual separation
 {
@@ -188,12 +194,12 @@ step_destroy_stream() {
   fi
   # --- NEW: Force cleanup of orphaned deployments and pods matching the stream name ---
   echo "Checking for orphaned Kubernetes deployments and pods for stream $STREAM_NAME..."
-  orphaned_deployments=$(kubectl get deployments -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name | test($stream)) | .metadata.name')
+  orphaned_deployments=$(kubectl get deployments -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name != null and (.metadata.name | test($stream))) | .metadata.name')
   for dep in $orphaned_deployments; do
     echo "Deleting orphaned deployment: $dep"
     kubectl delete deployment "$dep" -n "$K8S_NAMESPACE"
   done
-  orphaned_pods=$(kubectl get pods -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name | test($stream)) | .metadata.name')
+  orphaned_pods=$(kubectl get pods -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name != null and (.metadata.name | test($stream))) | .metadata.name')
   for pod in $orphaned_pods; do
     echo "Deleting orphaned pod: $pod"
     kubectl delete pod "$pod" -n "$K8S_NAMESPACE"
@@ -284,7 +290,8 @@ step_register_default_apps() {
     echo "ERROR: Maven URIs for S3 or Log app not found in $APPS_PROPS_FILE."
     return 1
   fi
-  S3_PROPS="s3.s3.common.endpoint-url=$S3_ENDPOINT,s3.s3.common.path-style-access=$S3_PATH_STYLE_ACCESS,s3.s3.supplier.remote-dir=$S3_BUCKET,s3.cloud.aws.region.static=$S3_REGION,s3.s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE,s3.cloud.aws.credentials.accessKey=$S3_ACCESS_KEY,s3.cloud.aws.credentials.secretKey=$S3_SECRET_KEY,s3.cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO,spring.rabbitmq.host=$RABBIT_HOST,spring.rabbitmq.port=$RABBIT_PORT,spring.rabbitmq.username=$RABBITMQ_USER,spring.rabbitmq.password=$RABBITMQ_PASSWORD,logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE"
+  # Only set S3 and log properties that are truly app-specific; remove RabbitMQ binder info
+  S3_PROPS="s3.s3.common.endpoint-url=$S3_ENDPOINT,s3.s3.common.path-style-access=$S3_PATH_STYLE_ACCESS,s3.s3.supplier.remote-dir=$S3_BUCKET,s3.cloud.aws.region.static=$S3_REGION,s3.s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE,s3.cloud.aws.credentials.accessKey=$S3_ACCESS_KEY,s3.cloud.aws.credentials.secretKey=$S3_SECRET_KEY,s3.cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO,logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE"
   RESPONSE=$(curl -s -X POST "$SCDF_API_URL/apps/source/s3?uri=$S3_MAVEN_URI" | tee -a "$LOGFILE")
   APP_JSON=$(curl -s "$SCDF_API_URL/apps/source/s3")
   ERR_MSG=$(echo "$APP_JSON" | jq -r '._embedded.errors[]?.message // empty')
@@ -311,7 +318,7 @@ step_register_default_apps() {
   else
     echo "Log sink app registered successfully."
   fi
-  LOG_PROPS="spring.rabbitmq.host=$RABBIT_HOST,spring.rabbitmq.port=$RABBIT_PORT,spring.rabbitmq.username=$RABBITMQ_USER,spring.rabbitmq.password=$RABBITMQ_PASSWORD,logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE,log.log.expression=$LOG_EXPRESSION"
+  LOG_PROPS="logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE,log.log.expression=$LOG_EXPRESSION"
   JSON_PAYLOAD=$(build_json_from_props "$LOG_PROPS")
   echo "Registering log sink options with payload: $JSON_PAYLOAD"
   if [[ "$JSON_PAYLOAD" == "{}" ]]; then
@@ -339,23 +346,15 @@ step_create_stream_definition() {
 
 step_deploy_stream() {
   echo "[STEP] Deploy stream"
-  DEPLOY_PROPS=""
+  DEPLOY_PROPS="deployer.platformName=kubernetes,"
   for app in "${APP_NAMES[@]}"; do
     DEPLOY_PROPS+="app.$app.spring.cloud.stream.bindings.input.group=$INPUT_GROUP,"
-    DEPLOY_PROPS+="app.$app.spring.rabbitmq.host=$RABBIT_HOST,"
-    DEPLOY_PROPS+="app.$app.spring.rabbitmq.port=$RABBIT_PORT,"
-    DEPLOY_PROPS+="app.$app.spring.rabbitmq.username=$RABBITMQ_USER,"
-    DEPLOY_PROPS+="app.$app.spring.rabbitmq.password=$RABBITMQ_PASSWORD,"
     DEPLOY_PROPS+="app.$app.logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,"
     DEPLOY_PROPS+="app.$app.logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,"
     DEPLOY_PROPS+="app.$app.logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,"
     DEPLOY_PROPS+="app.$app.logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE,"
   done
   DEPLOY_PROPS+="app.log.spring.cloud.stream.bindings.input.group=$INPUT_GROUP,"
-  DEPLOY_PROPS+="app.log.spring.rabbitmq.host=$RABBIT_HOST,"
-  DEPLOY_PROPS+="app.log.spring.rabbitmq.port=$RABBIT_PORT,"
-  DEPLOY_PROPS+="app.log.spring.rabbitmq.username=$RABBITMQ_USER,"
-  DEPLOY_PROPS+="app.log.spring.rabbitmq.password=$RABBITMQ_PASSWORD,"
   DEPLOY_PROPS+="app.log.logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,"
   DEPLOY_PROPS+="app.log.logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,"
   DEPLOY_PROPS+="app.log.logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,"
@@ -434,40 +433,6 @@ view_default_apps() {
   curl -s "$SCDF_API_URL/apps/sink/log/options" | jq . || echo "  (no defaults set)"
   echo
 }
-
-# --- Test Mode ---
-if [[ "${1:-}" == "--test" ]]; then
-  while true; do
-    clear
-    echo "Select a step to run:"
-    echo "1. Destroy stream if exists"
-    echo "2. Unregister processor apps"
-    echo "3. Register processor apps"
-    echo "4. Register default apps (source:s3, sink:log)"
-    echo "5. Create stream definition"
-    echo "6. Deploy stream"
-    echo "7. View stream"
-    echo "8. View processor apps"
-    echo "9. View default apps"
-    echo "Q. Quit"
-    read -p "Enter step number (or Q to quit): " STEP_NUM
-    case $STEP_NUM in
-      1) step_destroy_stream ;;
-      2) step_unregister_processor_apps ;;
-      3) step_register_processor_apps ;;
-      4) step_register_default_apps ;;
-      5) step_create_stream_definition ;;
-      6) step_deploy_stream ;;
-      7) view_stream ;;
-      8) view_processor_apps ;;
-      9) view_default_apps ;;
-      Q|q) echo "Exiting test mode."; exit 0 ;;
-      *) echo "Invalid step number." ;;
-    esac
-    echo
-    read -p "Press Enter to continue..."
-  done
-fi
 
 # Normal (non-test) execution: sequentially run all steps
 step_destroy_stream

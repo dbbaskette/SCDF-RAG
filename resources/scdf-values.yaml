@@ -4,24 +4,51 @@ skipper:
       value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
       value: "-Duser.home=/dataflow-maven-repo"
+    - name: SPRING_CLOUD_SKIPPER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
+      value: "https://repo.maven.apache.org/maven2"
   extraVolumeMounts:
     - name: maven-repo
-      mountPath: /dataflow-maven-repo
+      mountPath: "/dataflow-maven-repo"
   extraVolumes:
     - name: maven-repo
       emptyDir: {}
+  service:
+    type: NodePort
+    nodePort: 30081
+  deployer:
+    kubernetes:
+      environmentVariables:
+        - name: MAVEN_REMOTE_REPOSITORIES
+          value: "https://repo.maven.apache.org/maven2"
+        - name: MAVEN_LOCAL_REPOSITORY
+          value: "/dataflow-maven-repo/.m2/repository"
+      volumeMounts:
+        - name: maven-repo
+          mountPath: "/dataflow-maven-repo"
 server:
   extraEnvVars:
     - name: MAVEN_LOCAL_REPOSITORY
       value: "/dataflow-maven-repo/.m2/repository"
     - name: JAVA_OPTS
       value: "-Duser.home=/dataflow-maven-repo"
+    - name: SPRING_CLOUD_DATAFLOW_SERVER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
+      value: "https://repo.maven.apache.org/maven2"
   extraVolumeMounts:
     - name: maven-repo
-      mountPath: /dataflow-maven-repo
+      mountPath: "/dataflow-maven-repo"
   extraVolumes:
     - name: maven-repo
       emptyDir: {}
+  deployer:
+    kubernetes:
+      environmentVariables:
+        - name: MAVEN_REMOTE_REPOSITORIES
+          value: "https://repo.maven.apache.org/maven2"
+        - name: MAVEN_LOCAL_REPOSITORY
+          value: "/dataflow-maven-repo/.m2/repository"
+      volumeMounts:
+        - name: maven-repo
+          mountPath: "/dataflow-maven-repo"
 mariadb:
   enabled: false
 postgresql:

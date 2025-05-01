@@ -1,6 +1,0 @@
---- Management URLs and Credentials ---
-SCDF Dashboard:    http://127.0.0.1:30080/dashboard
-RabbitMQ MGMT UI:  http://127.0.0.1:31672 (user/bitnami)
-RabbitMQ AMQP:     localhost:30672 (user/bitnami)
-Namespace:         $NAMESPACE
-To stop services, delete the namespace or uninstall the Helm releases.
