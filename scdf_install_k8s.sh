@@ -12,57 +12,6 @@ fi
 
 # --- Generate SCDF values file from environment variables (external PostgreSQL, chart-managed RabbitMQ) ---
 cat > resources/scdf-values.yaml <<EOF
-skipper:
-  extraEnvVars:
-    - name: MAVEN_LOCAL_REPOSITORY
-      value: "/dataflow-maven-repo/.m2/repository"
-    - name: JAVA_OPTS
-      value: "-Duser.home=/dataflow-maven-repo"
-    - name: SPRING_CLOUD_SKIPPER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
-      value: "https://repo.maven.apache.org/maven2"
-  extraVolumeMounts:
-    - name: maven-repo
-      mountPath: "/dataflow-maven-repo"
-  extraVolumes:
-    - name: maven-repo
-      emptyDir: {}
-  service:
-    type: NodePort
-    nodePort: $SKIPPER_PORT
-  deployer:
-    kubernetes:
-      environmentVariables:
-        - name: MAVEN_REMOTE_REPOSITORIES
-          value: "https://repo.maven.apache.org/maven2"
-        - name: MAVEN_LOCAL_REPOSITORY
-          value: "/dataflow-maven-repo/.m2/repository"
-      volumeMounts:
-        - name: maven-repo
-          mountPath: "/dataflow-maven-repo"
-server:
-  extraEnvVars:
-    - name: MAVEN_LOCAL_REPOSITORY
-      value: "/dataflow-maven-repo/.m2/repository"
-    - name: JAVA_OPTS
-      value: "-Duser.home=/dataflow-maven-repo"
-    - name: SPRING_CLOUD_DATAFLOW_SERVER_MAVEN_REMOTE_REPOSITORIES_REPO1_URL
-      value: "https://repo.maven.apache.org/maven2"
-  extraVolumeMounts:
-    - name: maven-repo
-      mountPath: "/dataflow-maven-repo"
-  extraVolumes:
-    - name: maven-repo
-      emptyDir: {}
-  deployer:
-    kubernetes:
-      environmentVariables:
-        - name: MAVEN_REMOTE_REPOSITORIES
-          value: "https://repo.maven.apache.org/maven2"
-        - name: MAVEN_LOCAL_REPOSITORY
-          value: "/dataflow-maven-repo/.m2/repository"
-      volumeMounts:
-        - name: maven-repo
-          mountPath: "/dataflow-maven-repo"
 mariadb:
   enabled: false
 postgresql:
@@ -90,8 +39,6 @@ rabbitmq:
     nodePorts:
       amqp: ${RABBITMQ_NODEPORT_AMQP}
       manager: ${RABBITMQ_NODEPORT_MANAGER}
-networkPolicy:
-  enabled: false
 EOF
 
 # --- Step Counter (must be set before any function uses it) ---
@@ -102,12 +49,7 @@ STEP_COUNTER=0
 # --- Logging Setup ---
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-NOW=$(date +"%Y%m%d-%H%M%S")
-CUR_LOG="$LOGDIR/current-scdfInstall.log"
-if [ -f "$CUR_LOG" ]; then
-  mv "$CUR_LOG" "$LOGDIR/scdfInstall-$NOW.log"
-fi
-LOGFILE="$CUR_LOG"
+LOGFILE="scdf-install.log"
 
 # Log header for visual separation
 {
@@ -218,39 +160,45 @@ download_shell_jar() {
   fi
 }
 
-# Register all default apps as Maven artifacts
-# Usage: register_default_apps_maven
-register_default_apps_maven() {
-  step_major "Registering default apps as Maven artifacts"
-  step_minor "Registering all default apps as Maven artifacts..."
+# Register all default apps as Docker images
+# Usage: register_default_apps_docker
+register_default_apps_docker() {
+  step_major "Registering default apps as Docker images (RabbitMQ)"
   local failed=0
+  local success=0
+  local total=0
+
+  # Download the official SCDF docker app properties for RabbitMQ
+  local DOCKER_PROPS_URL="https://dataflow.spring.io/rabbitmq-docker-latest"
+  local TMP_PROPS_FILE="/tmp/scdf-docker-apps.properties"
+  curl -fsSL -o "$TMP_PROPS_FILE" "$DOCKER_PROPS_URL" || { echo "Failed to download Docker app properties." >&2; return 1; }
+
   while IFS= read -r line; do
-    [[ "$line" =~ ^#.*$ || -z "$line" || "$line" == *":jar:metadata"* ]] && continue
+    [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
     key="${line%%=*}"
     uri="${line#*=}"
     type="${key%%.*}"
     name="${key#*.}"
-    [[ "$uri" != maven:* ]] && continue
+    [[ "$uri" != docker:* ]] && continue
     REG_URL="$SCDF_SERVER_URL/apps/$type/$name"
-    step_minor "Registering $type:$name -> $uri"
-    echo "[register_default_apps_maven] Registering $type:$name -> $uri ($REG_URL)" >>"$LOGFILE"
-    echo "[register_default_apps_maven] curl -s -w '\n%{http_code}' -X POST '$REG_URL' -d 'uri=$uri'" >>"$LOGFILE"
+    total=$((total+1))
     REG_OUTPUT=$(curl -s -w "\n%{http_code}" -X POST "$REG_URL" -d "uri=$uri" 2>&1)
     HTTP_CODE=$(echo "$REG_OUTPUT" | tail -n1)
     BODY=$(echo "$REG_OUTPUT" | sed '$d')
-    echo "[register_default_apps_maven] Response: HTTP $HTTP_CODE, Body: $BODY" >>"$LOGFILE"
-    echo "$type.$name=$uri -> $HTTP_CODE" >> "$LOGFILE"
-    if [[ "$HTTP_CODE" != "201" ]]; then
-      err "Failed to register $type:$name ($HTTP_CODE)."
-      echo "[register_default_apps_maven] Failed to register $type:$name ($HTTP_CODE). Body: $BODY" >>"$LOGFILE"
-      echo -e "\033[1;31m[REGISTRATION ERROR] $type:$name ($HTTP_CODE): $BODY\033[0m" >&2
+    if [[ "$HTTP_CODE" == "201" ]]; then
+      echo "[REGISTER OK] $type:$name -> $uri (HTTP $HTTP_CODE)" >>"$LOGFILE"
+      success=$((success+1))
+    else
+      echo "[REGISTER FAIL] $type:$name -> $uri (HTTP $HTTP_CODE): $BODY" >>"$LOGFILE"
       failed=1
     fi
-  done < "$APPS_PROPS_FILE_MAVEN"
-  step_done "Default Maven applications registration complete."
-  echo "[register_default_apps_maven] Registration process complete." >>"$LOGFILE"
+  done < "$TMP_PROPS_FILE"
+
+  echo "[REGISTER SUMMARY] Total: $total, Success: $success, Failed: $((total-success))" >>"$LOGFILE"
   if [ $failed -eq 1 ]; then
-    echo -e "\033[1;31mSome or all Maven app registrations failed. See $LOGFILE for details.\033[0m" >&2
+    echo -e "\033[1;31mSome or all Docker app registrations failed. See $LOGFILE for details.\033[0m" >&2
+  else
+    echo "All Docker apps registered successfully."
   fi
 }
 
@@ -461,7 +409,7 @@ show_menu() {
   echo "4) Install Ollama Nomic Model"
   echo "5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
   echo "6) Download SCDF Shell JAR"
-  echo "7) Register Default Apps (Maven)"
+  echo "7) Register Default Apps (Docker)"
   echo "8) Display the Management URLs"
   echo "q) Exit"
   echo -n "Select a step to run [1-8, q to quit]: "
@@ -491,7 +439,7 @@ if [[ "$1" == "--test" ]]; then
         download_shell_jar
         ;;
       7)
-        register_default_apps_maven
+        register_default_apps_docker
         ;;
       8)
         print_management_urls
@@ -516,7 +464,7 @@ install_postgresql
 install_minio
 install_ollama_nomic
 install_scdf
-register_default_apps_maven
+register_default_apps_docker
 download_shell_jar
 print_management_urls
 

@@ -69,6 +69,9 @@ else
   exit 1
 fi
 
+# Initialize optional deploy props variable to prevent unbound errors
+EXTRA_DEPLOY_PROPS=""
+
 # Source stream-specific overrides if present
 if [ -f ./create_stream.properties ]; then
   source ./create_stream.properties
@@ -91,12 +94,7 @@ done
 
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-NOW=$(date +"%Y%m%d-%H%M%S")
-CUR_LOG="$LOGDIR/current-createStream.log"
-if [ -f "$CUR_LOG" ]; then
-  mv "$CUR_LOG" "$LOGDIR/createStream-$NOW.log"
-fi
-LOGFILE="$CUR_LOG"
+LOGFILE="create-stream.log"
 
 # Log header for visual separation
 {
@@ -136,6 +134,11 @@ build_json_from_props() {
   local props="$1"
   local json=""
   local first=1
+  # If props is empty, output {} and return
+  if [[ -z "$props" ]]; then
+    echo "{}"
+    return
+  fi
   IFS=',' read -ra PAIRS <<< "$props"
   for pair in "${PAIRS[@]}"; do
     key="${pair%%=*}"
@@ -149,6 +152,7 @@ build_json_from_props() {
       fi
     fi
   done
+  echo "DEBUG: build_json_from_props output: {$json}" >&2
   echo "{$json}"
 }
 
@@ -174,6 +178,7 @@ extract_and_log_api_messages() {
   done
 }
 
+
 # --- Step Functions ---
 
 step_destroy_stream() {
@@ -192,33 +197,17 @@ step_destroy_stream() {
   else
     echo "Stream $STREAM_NAME does not exist or could not be detected. No destroy needed."
   fi
-  # --- NEW: Force cleanup of orphaned deployments and pods matching the stream name ---
+  # Clean up orphaned deployments and pods matching the stream name (robust, no jq errors)
   echo "Checking for orphaned Kubernetes deployments and pods for stream $STREAM_NAME..."
-  orphaned_deployments=$(kubectl get deployments -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name != null and (.metadata.name | test($stream))) | .metadata.name')
-  for dep in $orphaned_deployments; do
+  for dep in $(kubectl get deployments -n "$K8S_NAMESPACE" --no-headers -o custom-columns=":metadata.name" | grep "$STREAM_NAME" || true); do
     echo "Deleting orphaned deployment: $dep"
-    kubectl delete deployment "$dep" -n "$K8S_NAMESPACE"
+    kubectl delete deployment "$dep" -n "$K8S_NAMESPACE" || true
   done
-  orphaned_pods=$(kubectl get pods -n "$K8S_NAMESPACE" -o json | jq -r --arg stream "$STREAM_NAME" '.items[] | select(.metadata.name != null and (.metadata.name | test($stream))) | .metadata.name')
-  for pod in $orphaned_pods; do
+  for pod in $(kubectl get pods -n "$K8S_NAMESPACE" --no-headers -o custom-columns=":metadata.name" | grep "$STREAM_NAME" || true); do
     echo "Deleting orphaned pod: $pod"
-    kubectl delete pod "$pod" -n "$K8S_NAMESPACE"
+    kubectl delete pod "$pod" -n "$K8S_NAMESPACE" || true
   done
-}
 
-wait_for_stream_cleanup() {
-  local retries=10
-  local delay=3
-  for ((i=1; i<=retries; i++)); do
-    local running=$(curl -s "$SCDF_API_URL/runtime/apps" | jq -r '.[] | select(.deploymentId | test("'"$STREAM_NAME"'"))')
-    if [[ -z "$running" ]]; then
-      echo "All apps for stream $STREAM_NAME are cleaned up."
-      return 0
-    fi
-    echo "Waiting for stream apps to be cleaned up... ($i/$retries)"
-    sleep $delay
-  done
-  echo "Warning: Stream apps for $STREAM_NAME may still be running after $((retries*delay)) seconds."
 }
 
 step_register_processor_apps() {
@@ -290,8 +279,9 @@ step_register_default_apps() {
     echo "ERROR: Maven URIs for S3 or Log app not found in $APPS_PROPS_FILE."
     return 1
   fi
-  # Only set S3 and log properties that are truly app-specific; remove RabbitMQ binder info
-  S3_PROPS="s3.s3.common.endpoint-url=$S3_ENDPOINT,s3.s3.common.path-style-access=$S3_PATH_STYLE_ACCESS,s3.s3.supplier.remote-dir=$S3_BUCKET,s3.cloud.aws.region.static=$S3_REGION,s3.s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE,s3.cloud.aws.credentials.accessKey=$S3_ACCESS_KEY,s3.cloud.aws.credentials.secretKey=$S3_SECRET_KEY,s3.cloud.aws.stack.auto=$CLOUD_AWS_STACK_AUTO,logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE"
+  # Only set S3 logging properties for registration/options
+  S3_PROPS=""
+  echo "DEBUG: Final S3_PROPS (registration/options): $S3_PROPS"
   RESPONSE=$(curl -s -X POST "$SCDF_API_URL/apps/source/s3?uri=$S3_MAVEN_URI" | tee -a "$LOGFILE")
   APP_JSON=$(curl -s "$SCDF_API_URL/apps/source/s3")
   ERR_MSG=$(echo "$APP_JSON" | jq -r '._embedded.errors[]?.message // empty')
@@ -318,7 +308,7 @@ step_register_default_apps() {
   else
     echo "Log sink app registered successfully."
   fi
-  LOG_PROPS="logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE,log.log.expression=$LOG_EXPRESSION"
+  LOG_PROPS="logging.level.org.springframework.integration.aws=${LOG_LEVEL_SI_AWS:-INFO},logging.level.org.springframework.integration.file=${LOG_LEVEL_SI_FILE:-INFO},logging.level.com.amazonaws=${LOG_LEVEL_AWS_SDK:-INFO},logging.level.org.springframework.cloud.stream.app.s3.source=${LOG_LEVEL_S3_SOURCE:-INFO},log.log.expression=$LOG_EXPRESSION"
   JSON_PAYLOAD=$(build_json_from_props "$LOG_PROPS")
   echo "Registering log sink options with payload: $JSON_PAYLOAD"
   if [[ "$JSON_PAYLOAD" == "{}" ]]; then
@@ -333,51 +323,99 @@ step_register_default_apps() {
 
 step_create_stream_definition() {
   echo "[STEP] Create stream definition"
-  STREAM_DEF="s3"
-  for name in "${APP_NAMES[@]}"; do
-    STREAM_DEF+=" | $name"
-  done
-  STREAM_DEF+=" | log"
+  # Set both input-in-0 and input bindings and group for pdf-preprocessor
+  STREAM_DEF="s3 \
+    --s3.common.endpoint-url=$S3_ENDPOINT \
+    --s3.common.path-style-access=true \
+    --s3.supplier.local-dir=/tmp/test \
+    --s3.supplier.remote-dir=$S3_BUCKET \
+    --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY \
+    --cloud.aws.credentials.secretKey=$S3_SECRET_KEY \
+    --cloud.aws.region.static=$S3_REGION \
+    --cloud.aws.stack.auto=false \
+    --spring.cloud.config.enabled=false \
+    --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
+    | pdf-preprocessor \
+    | log"
+  echo "DEBUG: Submitting stream definition:"
+  echo "$STREAM_DEF"
+#    --file.consumer.mode=ref \
+
+
+
   RESPONSE=$(curl -s -X POST "$SCDF_API_URL/streams/definitions" \
     -H 'Content-Type: application/x-www-form-urlencoded' \
     -d "name=$STREAM_NAME&definition=$STREAM_DEF" | tee -a "$LOGFILE")
   echo "Stream definition created: $STREAM_DEF"
+
+  # Only run debug queries if creation appears successful
+  if [[ "$RESPONSE" != *"errors"* ]]; then
+    echo "DEBUG: S3 app options after registration:"
+    curl -s "$SCDF_API_URL/apps/source/s3/options" | jq .
+    echo "DEBUG: Stream deployment manifest after deployment:"
+    curl -s "$SCDF_API_URL/streams/deployments/$STREAM_NAME" | jq .
+  else
+    echo "DEBUG: Stream definition creation failed, skipping manifest queries."
+  fi
 }
 
 step_deploy_stream() {
   echo "[STEP] Deploy stream"
-  DEPLOY_PROPS="deployer.platformName=kubernetes,"
-  for app in "${APP_NAMES[@]}"; do
-    DEPLOY_PROPS+="app.$app.spring.cloud.stream.bindings.input.group=$INPUT_GROUP,"
-    DEPLOY_PROPS+="app.$app.logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,"
-    DEPLOY_PROPS+="app.$app.logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,"
-    DEPLOY_PROPS+="app.$app.logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,"
-    DEPLOY_PROPS+="app.$app.logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE,"
+  set_minio_creds
+
+  DEPLOY_PROPS="app.s3.spring.cloud.stream.bindings.output.destination=s3-to-pdf"
+  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.supplier-out-0.destination=s3-to-pdf"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.app.s3.source=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.com.amazonaws=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.aws=DEBUG"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.file=DEBUG"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input-in-0.destination=s3-to-pdf"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input-in-0.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input.destination=s3-to-pdf"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.output.destination=pdf-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=pdf-to-log"
+  if [[ -n "$EXTRA_DEPLOY_PROPS" ]]; then
+    DEPLOY_PROPS+=",$EXTRA_DEPLOY_PROPS"
+  fi
+  echo "DEBUG: Final DEPLOY_PROPS : $DEPLOY_PROPS"
+  # Print each deploy property on its own line for readability
+  echo "DEBUG: Deploy properties list:"
+  IFS=',' read -ra props <<< "$DEPLOY_PROPS"
+  for kv in "${props[@]}"; do
+    if [[ -n "$kv" ]]; then
+      echo "  $kv"
+    fi
   done
-  DEPLOY_PROPS+="app.log.spring.cloud.stream.bindings.input.group=$INPUT_GROUP,"
-  DEPLOY_PROPS+="app.log.logging.level.org.springframework.integration.aws=$LOG_LEVEL_SI_AWS,"
-  DEPLOY_PROPS+="app.log.logging.level.org.springframework.integration.file=$LOG_LEVEL_SI_FILE,"
-  DEPLOY_PROPS+="app.log.logging.level.com.amazonaws=$LOG_LEVEL_AWS_SDK,"
-  DEPLOY_PROPS+="app.log.logging.level.org.springframework.cloud.stream.app.s3.source=$LOG_LEVEL_S3_SOURCE"
-  DEPLOY_PROPS="${DEPLOY_PROPS%,}"
-  JSON_PAYLOAD=$(build_json_from_props "$DEPLOY_PROPS")
-  echo "DEBUG: JSON payload to SCDF: $JSON_PAYLOAD"
+  unset IFS
+  # Convert DEPLOY_PROPS to comma-separated for JSON helper
+  DEPLOY_PROPS_COMMA="$DEPLOY_PROPS"
+  DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS_COMMA")
+  echo "DEBUG: DEPLOY_JSON for verification: $DEPLOY_JSON"
   RESPONSE=$(curl -s -X POST "$SCDF_API_URL/streams/deployments/$STREAM_NAME" \
     -H 'Content-Type: application/json' \
-    -d "$JSON_PAYLOAD" | tee -a "$LOGFILE")
+    -d "$DEPLOY_JSON")
+  echo "DEBUG: Deploy API response: $RESPONSE"
+  if [[ "$RESPONSE" == *"error"* || "$RESPONSE" == *"Exception"* ]]; then
+    echo "ERROR: Stream deployment failed!"
+  fi
   echo "Stream $STREAM_NAME deployed with properties: $DEPLOY_PROPS"
 }
-
+ 
 view_stream() {
   echo "[VIEW] Stream definition and status: $STREAM_NAME"
-  curl -s "$SCDF_API_URL/streams/definitions/$STREAM_NAME" | jq . || echo "(stream not found)"
+  curl -s "$SCDF_API_URL/streams/definitions/$STREAM_NAME" | jq . || echo "stream not found"
   echo
   echo "[VIEW] Stream deployment status: $STREAM_NAME"
-  curl -s "$SCDF_API_URL/streams/deployments/$STREAM_NAME" | jq . || echo "(deployment not found)"
+  curl -s "$SCDF_API_URL/streams/deployments/$STREAM_NAME" | jq . || echo "deployment not found"
 }
 
 view_processor_apps() {
-  echo "[VIEW] Processor apps registration and status (all pages):"
+  echo "[VIEW] Processor apps registration and status -all pages:"
   # Get the total number of pages for /apps
   PAGE_INFO=$(curl -s "$SCDF_API_URL/apps?page=0&size=20")
   TOTAL_PAGES=$(echo "$PAGE_INFO" | jq -r '.page.totalPages')
@@ -397,9 +435,9 @@ view_processor_apps() {
       break
     fi
     echo "--- Processor: $app_name ---"
-    curl -s "$SCDF_API_URL/apps/processor/$app_name" | jq . || echo "(not registered)"
+    curl -s "$SCDF_API_URL/apps/processor/$app_name" | jq . || echo "not registered"
     echo "  [Options/Defaults for $app_name]:"
-    curl -s "$SCDF_API_URL/apps/processor/$app_name/options" | jq . || echo "  (no defaults set)"
+    curl -s "$SCDF_API_URL/apps/processor/$app_name/options" | jq . || echo "  no defaults set"
     echo
     ((i++))
   done
@@ -407,36 +445,35 @@ view_processor_apps() {
 
 view_default_apps() {
   set_minio_creds
-  echo "[VIEW] Default apps (S3 source, log sink) registration and status:"
+  echo "[VIEW] Default apps S3 source, log sink registration and status:"
   echo "Defined default app variables:"
-  echo "  S3_APP_URI=${S3_APP_URI:-'(unset)'}"
-  echo "  S3_ENDPOINT=${S3_ENDPOINT:-'(unset)'}"
-  echo "  S3_ACCESS_KEY=${S3_ACCESS_KEY:-'(unset)'}"
-  echo "  S3_SECRET_KEY=${S3_SECRET_KEY:-'(unset)'}"
-  echo "  S3_BUCKET=${S3_BUCKET:-'(unset)'}"
-  echo "  S3_REGION=${S3_REGION:-'(unset)'}"
-  echo "  LOG_APP_URI=${LOG_APP_URI:-'(unset)'}"
-  echo "  LOG_EXPRESSION=${LOG_EXPRESSION:-'(unset)'}"
-  echo "  RABBIT_HOST=${RABBIT_HOST:-'(unset)'}"
-  echo "  RABBIT_PORT=${RABBIT_PORT:-'(unset)'}"
-  echo "  RABBITMQ_USER=${RABBITMQ_USER:-'(unset)'}"
-  echo "  RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-'(unset)'}"
+  echo "  S3_APP_URI=${S3_APP_URI:-unset}"
+  echo "  S3_ENDPOINT=${S3_ENDPOINT:-unset}"
+  echo "  S3_ACCESS_KEY=${S3_ACCESS_KEY:-unset}"
+  echo "  S3_SECRET_KEY=${S3_SECRET_KEY:-unset}"
+  echo "  S3_BUCKET=${S3_BUCKET:-unset}"
+  echo "  S3_REGION=${S3_REGION:-unset}"
+  echo "  LOG_APP_URI=${LOG_APP_URI:-unset}"
+  echo "  LOG_EXPRESSION=${LOG_EXPRESSION:-unset}"
+  echo "  RABBIT_HOST=${RABBIT_HOST:-unset}"
+  echo "  RABBIT_PORT=${RABBIT_PORT:-unset}"
+  echo "  RABBITMQ_USER=${RABBITMQ_USER:-unset}"
+  echo "  RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-unset}"
   echo
   echo "--- S3 Source App Registration ---"
-  curl -s "$SCDF_API_URL/apps/source/s3" | jq . || echo "(S3 source not registered)"
-  echo "  [Options/Defaults for S3]:"
-  curl -s "$SCDF_API_URL/apps/source/s3/options" | jq . || echo "  (no defaults set)"
+  curl -s "$SCDF_API_URL/apps/source/s3" | jq . || echo "S3 source not registered"
+  echo "  Options/Defaults for S3:"
+  curl -s "$SCDF_API_URL/apps/source/s3/options" | jq . || echo "  no defaults set"
   echo
   echo "--- Log Sink App Registration ---"
-  curl -s "$SCDF_API_URL/apps/sink/log" | jq . || echo "(log sink not registered)"
-  echo "  [Options/Defaults for Log]:"
-  curl -s "$SCDF_API_URL/apps/sink/log/options" | jq . || echo "  (no defaults set)"
+  curl -s "$SCDF_API_URL/apps/sink/log" | jq . || echo "log sink not registered"
+  echo "  Options/Defaults for Log:"
+  curl -s "$SCDF_API_URL/apps/sink/log/options" | jq . || echo "  no defaults set"
   echo
 }
 
 # Normal (non-test) execution: sequentially run all steps
 step_destroy_stream
-wait_for_stream_cleanup
 step_unregister_processor_apps
 step_register_processor_apps
 step_register_default_apps
