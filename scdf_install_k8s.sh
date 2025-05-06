@@ -2,13 +2,19 @@
 # scdf_install_k8s.sh: Installs SCDF on Kubernetes
 # Usage: ./scdf_install_k8s.sh > logs/scdf_install_k8s.log 2>&1
 
-
 # Source environment variables from scdf_env.properties
 if [ -f "$(dirname "$0")/scdf_env.properties" ]; then
   set -a
   . "$(dirname "$0")/scdf_env.properties"
   set +a
 fi
+
+# --- Ensure Bitnami Helm repo is added and updated ---
+if ! helm repo list | grep -q '^bitnami'; then
+  echo "Adding Bitnami Helm repo..."
+  helm repo add bitnami https://charts.bitnami.com/bitnami
+fi
+helm repo update >>"$LOGFILE" 2>&1
 
 # --- Generate SCDF values file from environment variables (external PostgreSQL, chart-managed RabbitMQ) ---
 cat > resources/scdf-values.yaml <<EOF
@@ -49,7 +55,7 @@ STEP_COUNTER=0
 # --- Logging Setup ---
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-LOGFILE="scdf-install.log"
+LOGFILE="$LOGDIR/scdf-install.log"
 
 # Log header for visual separation
 {
@@ -198,7 +204,7 @@ register_default_apps_docker() {
   if [ $failed -eq 1 ]; then
     echo -e "\033[1;31mSome or all Docker app registrations failed. See $LOGFILE for details.\033[0m" >&2
   else
-    echo "All Docker apps registered successfully."
+    step_done "All Docker apps registered successfully."
   fi
 }
 
@@ -284,11 +290,43 @@ is_release_installed() {
   helm status "$release_name" --namespace "$namespace" >/dev/null 2>&1
 }
 
+# --- Helper function to check for pgvector extension in PostgreSQL ---
+check_pgvector_extension() {
+  echo "Checking for pgvector extension in PostgreSQL..." >>"$LOGFILE"
+  POSTGRES_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/instance=$POSTGRES_RELEASE_NAME,app.kubernetes.io/component=primary -o jsonpath="{.items[0].metadata.name}")
+  # Use the postgres superuser for extension check/install
+  SUPERUSER=postgres
+  SUPERPASS=$POSTGRES_SUPERUSER_PASSWORD
+  # Wait for PostgreSQL to be ready for SQL connections
+  for i in {1..10}; do
+    kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- \
+      bash -c "PGPASSWORD=$SUPERPASS psql -U $SUPERUSER -d $POSTGRES_DB -c '\l'" >>"$LOGFILE" 2>&1 && break
+    echo "Waiting for PostgreSQL to accept connections... ($i/10)" >>"$LOGFILE"
+    sleep 5
+  done
+  RESULT=$(kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- bash -c "PGPASSWORD=$SUPERPASS psql -U $SUPERUSER -d $POSTGRES_DB -tAc \"SELECT extname FROM pg_extension WHERE extname = 'vector';\"")
+  if [[ "$RESULT" == "vector" ]]; then
+    echo "pgvector extension is INSTALLED." >>"$LOGFILE"
+  else
+    echo "pgvector extension is NOT installed! Attempting to install..." >>"$LOGFILE"
+    kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- bash -c "PGPASSWORD=$SUPERPASS psql -U $SUPERUSER -d $POSTGRES_DB -c \"CREATE EXTENSION IF NOT EXISTS vector;\"" >>"$LOGFILE"
+    # Re-check after install
+    RESULT2=$(kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- bash -c "PGPASSWORD=$SUPERPASS psql -U $SUPERUSER -d $POSTGRES_DB -tAc \"SELECT extname FROM pg_extension WHERE extname = 'vector';\"")
+    if [[ "$RESULT2" == "vector" ]]; then
+      echo "pgvector extension has been INSTALLED successfully." >>"$LOGFILE"
+    else
+      echo "FAILED to install pgvector extension!" >>"$LOGFILE"
+    fi
+  fi
+  echo "pgvector extension check complete." >>"$LOGFILE"
+}
+
 # --- Install PostgreSQL as a standalone function ---
 install_postgresql() {
   ensure_namespace
   if is_release_installed "$POSTGRES_RELEASE_NAME" "$NAMESPACE"; then
     step_minor "PostgreSQL already installed. Skipping."
+    check_pgvector_extension
     return 0
   fi
   step_major "Install PostgreSQL"
@@ -297,12 +335,19 @@ install_postgresql() {
     --set auth.username="$POSTGRES_USER" \
     --set auth.password="$POSTGRES_PASSWORD" \
     --set auth.database="$POSTGRES_DB" \
-    --set image.tag="$POSTGRES_IMAGE_TAG" \
+    --set auth.postgresPassword="$POSTGRES_SUPERUSER_PASSWORD" \
+    --set image.repository=bitnami/postgresql \
+    --set image.tag=latest \
+    --set primary.service.type=NodePort \
+    --set primary.service.nodePorts.postgresql=$POSTGRES_NODEPORT \
     --set service.type=NodePort \
-    --set service.nodePort="$POSTGRES_NODEPORT" \
+    --set service.nodePorts.postgresql=$POSTGRES_NODEPORT \
+    --set postgresql.extensions[0]=pgvector \
+    --set global.security.allowInsecureImages=true \
     --wait >>"$LOGFILE" 2>&1
   wait_for_ready postgresql 300
   step_done "PostgreSQL installed and ready."
+  check_pgvector_extension
 }
 
 # --- Install MinIO as a standalone function ---
