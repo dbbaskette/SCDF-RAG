@@ -3,7 +3,19 @@
 # create_stream.sh (REST API version, step-by-step)
 #
 # This script automates SCDF stream creation using only REST API calls.
-# Use --test to run individual steps interactively.
+#
+# USAGE:
+#   ./create_stream.sh           # Runs the full pipeline (destroy, register, create, deploy, view)
+#   ./create_stream.sh --test    # Interactive mode: run individual major steps or test streams from a menu
+#   ./create_stream.sh --test-embed  # Deploys a test stream for embedding processor verification
+#
+# In --test mode, you can select and run any major step or test stream independently, similar to the SCDF install script.
+#
+# Test stream options:
+#   - Test S3 source: Deploys 's3 | log' to verify S3 source and log sink
+#   - Test textProc pipeline: Deploys 's3 | textProc | log' to verify S3 source, textProc processor, and log sink
+#   - Delete S3 source test stream
+#   - Delete textProc pipeline test stream
 
 # Ensure K8S_NAMESPACE is set, default to 'scdf' if not
 K8S_NAMESPACE=${K8S_NAMESPACE:-scdf}
@@ -60,25 +72,36 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: The 'jq' command is required but not installed. Please install jq and rerun this script." >&2
   exit 1
 fi
+# Function to always set S3_ACCESS_KEY and S3_SECRET_KEY from Kubernetes
+set_minio_creds() {
+  S3_ACCESS_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-user}' | base64 --decode 2>/dev/null || echo '')
+  S3_SECRET_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-password}' | base64 --decode 2>/dev/null || echo '')
+  export S3_ACCESS_KEY
+  export S3_SECRET_KEY
+}
 
-# Always source shared environment variables first, regardless of mode
-if [ -f ./scdf_env.properties ]; then
-  source ./scdf_env.properties
-else
-  echo "scdf_env.properties not found! Exiting." >&2
-  exit 1
-fi
+# Helper function to source both properties files
+source_properties() {
+  if [ -f ./scdf_env.properties ]; then
+    source ./scdf_env.properties
+  else
+    echo "scdf_env.properties not found! Exiting." >&2
+    exit 1
+  fi
+  if [ -f ./create_stream.properties ]; then
+    source ./create_stream.properties
+  else
+    echo "create_stream.properties not found! Exiting." >&2
+    exit 1
+  fi
+  set_minio_creds
+}
+
+# Source properties at script start for initial setup
+source_properties
 
 # Initialize optional deploy props variable to prevent unbound errors
 EXTRA_DEPLOY_PROPS=""
-
-# Source stream-specific overrides if present
-if [ -f ./create_stream.properties ]; then
-  source ./create_stream.properties
-else
-  echo "create_stream.properties not found! Exiting." >&2
-  exit 1
-fi
 
 # Initialize APP_NAMES array from create_stream.properties (app_name_1, app_name_2, ...)
 APP_NAMES=()
@@ -94,7 +117,7 @@ done
 
 LOGDIR="$(pwd)/logs"
 mkdir -p "$LOGDIR"
-LOGFILE="create-stream.log"
+LOGFILE="$LOGDIR/create-stream.log"
 
 # Log header for visual separation
 {
@@ -121,15 +144,9 @@ fi
 S3_APP_URI=${S3_APP_URI:-$(grep '^source.s3=' "$APPS_PROPS_FILE" | cut -d'=' -f2- 2>/dev/null || echo '')}
 LOG_APP_URI=${LOG_APP_URI:-$(grep '^sink.log=' "$APPS_PROPS_FILE" | cut -d'=' -f2- 2>/dev/null || echo '')}
 
-# Function to always set S3_ACCESS_KEY and S3_SECRET_KEY from Kubernetes
-set_minio_creds() {
-  S3_ACCESS_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-user}' | base64 --decode 2>/dev/null || echo '')
-  S3_SECRET_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-password}' | base64 --decode 2>/dev/null || echo '')
-  export S3_ACCESS_KEY
-  export S3_SECRET_KEY
-}
 
-# Helper to build JSON from comma-separated key=value pairs, skipping empty values
+
+# Function to build JSON from comma-separated key=value pairs, skipping empty values
 build_json_from_props() {
   local props="$1"
   local json=""
@@ -182,6 +199,7 @@ extract_and_log_api_messages() {
 # --- Step Functions ---
 
 step_destroy_stream() {
+  source_properties
   echo "[STEP] Destroy stream if exists"
   # Undeploy stream deployment if it exists
   DEPLOY_STATUS=$(curl -s "$SCDF_API_URL/streams/deployments/$STREAM_NAME")
@@ -211,6 +229,7 @@ step_destroy_stream() {
 }
 
 step_register_processor_apps() {
+  source_properties
   echo "[STEP] Register processor apps (Docker)"
   i=1
   while true; do
@@ -240,6 +259,7 @@ step_register_processor_apps() {
 }
 
 step_unregister_processor_apps() {
+  source_properties
   echo "[STEP] Unregister processor apps if present"
   for idx in "${!APP_NAMES[@]}"; do
     name="${APP_NAMES[$idx]}"
@@ -254,6 +274,7 @@ step_unregister_processor_apps() {
 }
 
 step_register_default_apps() {
+  source_properties
   echo "[STEP] Register default apps (source:s3, sink:log) using Maven URIs"
   set_minio_creds
   echo "MinIO credentials fetched."
@@ -322,6 +343,7 @@ step_register_default_apps() {
 }
 
 step_create_stream_definition() {
+  source_properties
   echo "[STEP] Create stream definition"
   # Set both input-in-0 and input bindings and group for pdf-preprocessor
   STREAM_DEF="s3 \
@@ -336,6 +358,7 @@ step_create_stream_definition() {
     --spring.cloud.config.enabled=false \
     --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
     | pdf-preprocessor \
+    | embedding-processor \
     | log"
   echo "DEBUG: Submitting stream definition:"
   echo "$STREAM_DEF"
@@ -349,7 +372,7 @@ step_create_stream_definition() {
   echo "Stream definition created: $STREAM_DEF"
 
   # Only run debug queries if creation appears successful
-  if [[ "$RESPONSE" != *"errors"* ]]; then
+  if [[ "$RESPONSE" != *"error"* || "$RESPONSE" == *"Exception"* ]]; then
     echo "DEBUG: S3 app options after registration:"
     curl -s "$SCDF_API_URL/apps/source/s3/options" | jq .
     echo "DEBUG: Stream deployment manifest after deployment:"
@@ -360,6 +383,7 @@ step_create_stream_definition() {
 }
 
 step_deploy_stream() {
+  source_properties
   echo "[STEP] Deploy stream"
   set_minio_creds
 
@@ -377,8 +401,24 @@ step_deploy_stream() {
   DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input-in-0.group=rag-pipeline"
   DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input.destination=s3-to-pdf"
   DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.input.group=rag-pipeline"
-  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.output.destination=pdf-to-log"
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=pdf-to-log"
+  DEPLOY_PROPS+=",app.pdf-preprocessor.spring.cloud.stream.bindings.output.destination=pdf-to-pg"
+
+  DEPLOY_PROPS+=",app.embedding-processor.spring.cloud.stream.bindings.input-in-0.destination=pdf-to-pg"
+  DEPLOY_PROPS+=",app.embedding-processor.spring.cloud.stream.bindings.input-in-0.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.embedding-processor.spring.cloud.stream.bindings.input.destination=pdf-to-pg"
+  DEPLOY_PROPS+=",app.embedding-processor.spring.cloud.stream.bindings.input.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.embedding-processor.spring.cloud.stream.bindings.output.destination=pg-to-log"
+
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=pg-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input-in-0.destination=pg-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input-in-0.group=rag-pipeline"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream=DEBUG"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.integration=DEBUG"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
+
+
+
   if [[ -n "$EXTRA_DEPLOY_PROPS" ]]; then
     DEPLOY_PROPS+=",$EXTRA_DEPLOY_PROPS"
   fi
@@ -407,6 +447,7 @@ step_deploy_stream() {
 }
  
 view_stream() {
+  source_properties
   echo "[VIEW] Stream definition and status: $STREAM_NAME"
   curl -s "$SCDF_API_URL/streams/definitions/$STREAM_NAME" | jq . || echo "stream not found"
   echo
@@ -415,6 +456,7 @@ view_stream() {
 }
 
 view_processor_apps() {
+  source_properties
   echo "[VIEW] Processor apps registration and status -all pages:"
   # Get the total number of pages for /apps
   PAGE_INFO=$(curl -s "$SCDF_API_URL/apps?page=0&size=20")
@@ -444,6 +486,7 @@ view_processor_apps() {
 }
 
 view_default_apps() {
+  source_properties
   set_minio_creds
   echo "[VIEW] Default apps S3 source, log sink registration and status:"
   echo "Defined default app variables:"
@@ -471,6 +514,214 @@ view_default_apps() {
   curl -s "$SCDF_API_URL/apps/sink/log/options" | jq . || echo "  no defaults set"
   echo
 }
+
+# --- Delete S3 Source Test Stream ---
+delete_test_s3_source() {
+  local TEST_STREAM_NAME="test-s3-source"
+  echo "[DELETE-TEST-S3-SOURCE] Deleting test stream: $TEST_STREAM_NAME"
+  curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
+  echo "[DELETE-TEST-S3-SOURCE] Test stream deleted."
+}
+
+# --- Delete textProc Pipeline Test Stream ---
+delete_test_textproc_pipeline() {
+  local TEST_STREAM_NAME="test-textproc-pipeline"
+  echo "[DELETE-TEST-TEXTPROC] Deleting test stream: $TEST_STREAM_NAME"
+  curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
+  echo "[DELETE-TEST-TEXTPROC] Test stream deleted."
+}
+
+# --- Test S3 Source ---
+test_s3_source() {
+  echo "[TEST-S3-SOURCE] Creating test stream: s3 | log"
+  local TEST_STREAM_NAME="test-s3-source"
+  # Register S3 source and log sink apps (Maven URIs assumed)
+  curl -s -X DELETE "$SCDF_API_URL/apps/source/s3" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/apps/sink/log" > /dev/null
+  sleep 1
+  curl -s -X POST "$SCDF_API_URL/apps/source/s3" -d "uri=docker:springcloudstream/s3-source-rabbit:3.2.1" -d "force=true"
+  curl -s -X POST "$SCDF_API_URL/apps/sink/log" -d "uri=docker:springcloudstream/log-sink-rabbit:3.2.1" -d "force=true"
+  # Destroy any existing test stream and wait for full deletion
+  curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
+  # Wait for deletion
+  for i in {1..20}; do
+    DEPLOY_STATUS=$(curl -s "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME")
+    DEF_STATUS=$(curl -s "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME")
+    if [[ "$DEPLOY_STATUS" == *"not found"* && "$DEF_STATUS" == *"not found"* ]]; then
+      break
+    fi
+    sleep 1
+  done
+  # Create the test stream definition
+  curl -s -X POST "$SCDF_API_URL/streams/definitions" \
+    -d "name=$TEST_STREAM_NAME" \
+    -d "definition=s3 | log"
+  # Deploy the test stream with spring.profiles.active=scdf
+  DEPLOY_PROPS="deployer.*.javaOpts=-Dspring.profiles.active=scdf"
+  DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS")
+  curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" \
+    -H 'Content-Type: application/json' \
+    -d "$DEPLOY_JSON"
+  echo "[TEST-S3-SOURCE] Test stream deployed. To test, add a file to your configured S3 bucket and check the log sink output."
+}
+
+
+# --- Test textProc Pipeline ---
+test_textproc_pipeline() {
+  echo "[TEST-TEXTPROC] Creating test stream: s3 | textProc | log"
+  local TEST_STREAM_NAME="test-textproc-pipeline"
+  # Destroy any existing test stream and wait for full deletion
+  curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
+  # Register textProc processor
+  curl -s -X DELETE "$SCDF_API_URL/apps/processor/textProc" > /dev/null
+  sleep 1
+  curl -s -X POST "$SCDF_API_URL/apps/processor/textProc" -d "uri=docker:dbbaskette/textproc:latest" -d "force=true"
+
+  # Wait for deletion
+  for i in {1..20}; do
+    DEF_STATUS=$(curl -s "$SCDF_API_URL/apps/processor/textProc")
+    if [[ "$DEF_STATUS" == *"not found"* ]]; then
+      break
+    fi
+    sleep 1
+  done
+  # Create the test stream definition with full s3 source properties
+  STREAM_DEF="s3 \
+    --s3.common.endpoint-url=$S3_ENDPOINT \
+    --s3.common.path-style-access=true \
+    --s3.supplier.local-dir=/tmp/test \
+    --s3.supplier.remote-dir=$S3_BUCKET \
+    --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY \
+    --cloud.aws.credentials.secretKey=$S3_SECRET_KEY \
+    --cloud.aws.region.static=$S3_REGION \
+    --cloud.aws.stack.auto=false \
+    --spring.cloud.config.enabled=false \
+    --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
+    --s3.supplier.list-only=true \
+    | textProc | log"
+  curl -s -X POST "$SCDF_API_URL/streams/definitions" \
+    -d "name=$TEST_STREAM_NAME" \
+    -d "definition=$STREAM_DEF"
+  # Build deploy properties string and JSON
+  DEPLOY_PROPS="app.textProc.environment.S3_ENDPOINT=${S3_ENDPOINT},app.textProc.environment.S3_ACCESS_KEY=${S3_ACCESS_KEY},app.textProc.environment.S3_SECRET_KEY=${S3_SECRET_KEY},app.textProc.spring.profiles.active=scdf" 
+  DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS")
+  # Deploy the test stream with processor environment variables and spring.profiles.active=scdf
+  curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" \
+    -H 'Content-Type: application/json' \
+    -d "$DEPLOY_JSON"
+  echo "[TEST-TEXTPROC] Test stream deployed. To test, add a file to your configured S3 bucket and check the log sink output."
+}
+
+# --- Test Embed Stream ---
+if [[ "$1" == "--test-embed" ]]; then
+  echo "[TEST-EMBED] Creating test stream: file source | embedding-processor | log sink"
+  TEST_STREAM_NAME="test-embed-stream"
+  # Register file source, embedding processor, and log sink apps
+  curl -s -X DELETE "$SCDF_API_URL/apps/source/file" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/apps/processor/embedding-processor" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/apps/sink/log" > /dev/null
+  sleep 1
+  curl -s -X POST "$SCDF_API_URL/apps/source/file" -d "uri=docker:springcloudstream/file-source-rabbit:3.2.1" -d "force=true"
+  curl -s -X POST "$SCDF_API_URL/apps/processor/embedding-processor" -d "uri=docker:dbbaskette/embedding-processor:0.0.1-SNAPSHOT" -d "force=true"
+  curl -s -X POST "$SCDF_API_URL/apps/sink/log" -d "uri=docker:springcloudstream/log-sink-rabbit:3.2.1" -d "force=true"
+  # Destroy any existing test stream and wait for full deletion
+  curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
+  # Wait for deletion
+  for i in {1..20}; do
+    DEPLOY_STATUS=$(curl -s "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME")
+    DEF_STATUS=$(curl -s "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME")
+    if [[ "$DEPLOY_STATUS" == *"not found"* && "$DEF_STATUS" == *"not found"* ]]; then
+      break
+    fi
+    sleep 1
+  done
+  # Create the test stream definition
+  curl -s -X POST "$SCDF_API_URL/streams/definitions" \
+    -d "name=$TEST_STREAM_NAME" \
+    -d "definition=file --file.directory=/tmp/test | embedding-processor | log"
+  # Deploy the test stream
+  curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME"
+  echo "[TEST-EMBED] Test stream deployed. To test, put a file in /tmp/test in the file source pod."
+  exit 0
+fi
+
+# --- Interactive Test Mode ---
+show_menu() {
+  echo
+  echo "SCDF Stream Creation Test Menu"
+  echo "-----------------------------------"
+  echo "1) Destroy stream"
+  echo "2) Unregister processor apps"
+  echo "3) Register processor apps"
+  echo "4) Register default apps"
+  echo "5) Create stream definition"
+  echo "6) Deploy stream"
+  echo "7) View stream status"
+  echo "8) View registered processor apps"
+  echo "9) View default apps"
+  echo "t1) Test S3 source (s3 | log)"
+  echo "t2) Test textProc pipeline (s3 | textProc | log)"
+  echo "q) Exit"
+  echo -n "Select a step to run [1-9, t1, t2, q to quit]: "
+}
+
+if [[ "$1" == "--test" ]]; then
+  while true; do
+    show_menu
+    read -r choice
+    case $choice in
+      1)
+        step_destroy_stream
+        ;;
+      2)
+        step_unregister_processor_apps
+        ;;
+      3)
+        step_register_processor_apps
+        ;;
+      4)
+        step_register_default_apps
+        ;;
+      5)
+        step_create_stream_definition
+        ;;
+      6)
+        step_deploy_stream
+        ;;
+      7)
+        view_stream
+        ;;
+      8)
+        view_processor_apps
+        ;;
+      9)
+        view_default_apps
+        ;;
+      t1)
+        test_s3_source
+        ;;
+      t2)
+        test_textproc_pipeline
+        ;;
+
+      q|Q)
+        echo "Exiting."
+        exit 0
+        ;;
+      *)
+        echo "Invalid option. Please select 1-9, t1, t2 or q to quit."
+        ;;
+    esac
+    echo
+    echo "--- Step complete. Return to menu. ---"
+  done
+  exit 0
+fi
 
 # Normal (non-test) execution: sequentially run all steps
 step_destroy_stream
