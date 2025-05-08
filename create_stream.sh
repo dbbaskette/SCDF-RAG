@@ -72,7 +72,14 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: The 'jq' command is required but not installed. Please install jq and rerun this script." >&2
   exit 1
 fi
-# Function to always set S3_ACCESS_KEY and S3_SECRET_KEY from Kubernetes
+# ----------------------------------------------------------------------
+# set_minio_creds
+#
+# Fetches MinIO (S3) credentials from Kubernetes secrets in the 'scdf'
+# namespace and exports them as environment variables for use by the
+# rest of the script. Ensures that S3_ACCESS_KEY and S3_SECRET_KEY are
+# always up-to-date for deployments.
+# ----------------------------------------------------------------------
 set_minio_creds() {
   S3_ACCESS_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-user}' | base64 --decode 2>/dev/null || echo '')
   S3_SECRET_KEY=$(kubectl get secret minio -n scdf -o jsonpath='{.data.root-password}' | base64 --decode 2>/dev/null || echo '')
@@ -80,7 +87,14 @@ set_minio_creds() {
   export S3_SECRET_KEY
 }
 
-# Helper function to source both properties files
+# ----------------------------------------------------------------------
+# source_properties
+#
+# Loads environment and stream configuration from two properties files:
+#   - scdf_env.properties: Cluster-wide and SCDF platform settings
+#   - create_stream.properties: Stream-specific and app-specific settings
+# Exits with error if either file is missing. Always refreshes S3 creds.
+# ----------------------------------------------------------------------
 source_properties() {
   if [ -f ./scdf_env.properties ]; then
     source ./scdf_env.properties
@@ -145,35 +159,77 @@ S3_APP_URI=${S3_APP_URI:-$(grep '^source.s3=' "$APPS_PROPS_FILE" | cut -d'=' -f2
 LOG_APP_URI=${LOG_APP_URI:-$(grep '^sink.log=' "$APPS_PROPS_FILE" | cut -d'=' -f2- 2>/dev/null || echo '')}
 
 
-
-# Function to build JSON from comma-separated key=value pairs, skipping empty values
+# ----------------------------------------------------------------------
+# build_json_from_props
+#
+# Converts a comma-separated string of key=value pairs into a JSON object
+# string suitable for SCDF REST API deploy requests. Handles special case
+# for deployer.textProc.kubernetes.environmentVariables, ensuring that
+# environment variables are formatted as a single string with commas.
+# Skips empty pairs and trims whitespace.
+# ----------------------------------------------------------------------
 build_json_from_props() {
   local props="$1"
   local json=""
   local first=1
-  # If props is empty, output {} and return
-  if [[ -z "$props" ]]; then
-    echo "{}"
-    return
+
+  # Special handling for deployer.textProc.kubernetes.environmentVariables
+  local k8s_env_key="deployer.textProc.kubernetes.environmentVariables="
+  local k8s_env_value=""
+  if [[ "$props" == *"$k8s_env_key"* ]]; then
+    # Extract the value for the special key (everything after the key)
+    k8s_env_value="${props#*${k8s_env_key}}"
+    # If there are other properties after, cut at the next comma
+    if [[ "$k8s_env_value" == *,* ]]; then
+      k8s_env_value="${k8s_env_value%%,*}"
+    fi
+    # Remove the special property from the original string
+    props="${props/${k8s_env_key}${k8s_env_value}/}"
+    # Remove any leading or trailing commas
+    props="${props#,}"
+    props="${props%,}"
+    # Replace ; and | with , in the env value
+    k8s_env_value="${k8s_env_value//[;|]/,}"
   fi
+
+  # Now process the remaining properties (split at commas)
   IFS=',' read -ra PAIRS <<< "$props"
   for pair in "${PAIRS[@]}"; do
+    # Skip empty
+    [[ -z "$pair" ]] && continue
     key="${pair%%=*}"
     val="${pair#*=}"
-    if [[ -n "$key" && -n "$val" ]]; then
-      if [[ $first -eq 1 ]]; then
-        json="\"$key\":\"$val\""
-        first=0
-      else
-        json+=",\"$key\":\"$val\""
-      fi
+    # Remove possible surrounding spaces
+    key="$(echo -n "$key" | xargs)"
+    val="$(echo -n "$val" | xargs)"
+    [[ -z "$key" ]] && continue
+    if [[ $first -eq 1 ]]; then
+      json="\"$key\":\"$val\""
+      first=0
+    else
+      json+=",\"$key\":\"$val\""
     fi
   done
+
+  # Add the special property at the end (if present)
+  if [[ -n "$k8s_env_value" ]]; then
+    if [[ $first -eq 0 ]]; then
+      json+=",";
+    fi
+    json+="\"deployer.textProc.kubernetes.environmentVariables\":\"$k8s_env_value\""
+  fi
+
   echo "DEBUG: build_json_from_props output: {$json}" >&2
   echo "{$json}"
 }
 
-# Improved: Robustly extract all errors/warnings from possibly multiple JSON objects in a response
+# ----------------------------------------------------------------------
+# extract_and_log_api_messages
+#
+# Parses SCDF REST API responses for embedded errors and warnings, even if
+# multiple JSON objects are returned. Logs all error and warning messages
+# to the log file and prints them to the terminal for visibility.
+# ----------------------------------------------------------------------
 extract_and_log_api_messages() {
   local RESPONSE="$1"
   local LOGFILE="$2"
@@ -196,8 +252,26 @@ extract_and_log_api_messages() {
 }
 
 
+# ----------------------------------------------------------------------
 # --- Step Functions ---
+#
+# Each step_* function implements a major stage in the SCDF stream lifecycle:
+#   - step_destroy_stream: Remove any existing stream and clean up Kubernetes
+#   - step_register_processor_apps: Register custom processor Docker apps
+#   - step_register_default_apps: Register default source/sink apps via Maven
+#   - step_create_stream_definition: Submit the stream definition to SCDF
+#   - step_deploy_stream: Deploy the stream with all required deploy properties
+#   - view_*: Utility functions for querying SCDF REST API
+#   - test_*: Test streams for verifying S3 source, textProc, and embedding
+# ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# step_destroy_stream
+#
+# Removes any existing SCDF stream deployment and definition for $STREAM_NAME.
+# Also cleans up orphaned Kubernetes deployments and pods matching the stream name.
+# Ensures a clean slate before creating a new stream.
+# ----------------------------------------------------------------------
 step_destroy_stream() {
   source_properties
   echo "[STEP] Destroy stream if exists"
@@ -228,6 +302,13 @@ step_destroy_stream() {
 
 }
 
+# ----------------------------------------------------------------------
+# step_register_processor_apps
+#
+# Registers all custom processor apps listed in create_stream.properties
+# as SCDF processor apps using their Docker image URIs. Skips any entry
+# with missing name or image. Logs registration status and errors.
+# ----------------------------------------------------------------------
 step_register_processor_apps() {
   source_properties
   echo "[STEP] Register processor apps (Docker)"
@@ -273,6 +354,13 @@ step_unregister_processor_apps() {
   done
 }
 
+# ----------------------------------------------------------------------
+# step_register_default_apps
+#
+# Registers the default source (S3) and sink (log) apps using Maven URIs
+# from the selected properties file. Also registers their options using
+# build_json_from_props. Validates that all required S3 settings are present.
+# ----------------------------------------------------------------------
 step_register_default_apps() {
   source_properties
   echo "[STEP] Register default apps (source:s3, sink:log) using Maven URIs"
@@ -342,6 +430,13 @@ step_register_default_apps() {
   fi
 }
 
+# ----------------------------------------------------------------------
+# step_create_stream_definition
+#
+# Builds and submits the stream definition to SCDF via REST API. The stream
+# definition string specifies the source, processors, and sink, along with
+# all required app properties. Prints debug info and logs the result.
+# ----------------------------------------------------------------------
 step_create_stream_definition() {
   source_properties
   echo "[STEP] Create stream definition"
@@ -350,6 +445,7 @@ step_create_stream_definition() {
     --s3.common.endpoint-url=$S3_ENDPOINT \
     --s3.common.path-style-access=true \
     --s3.supplier.local-dir=/tmp/test \
+    --s3.supplier.polling-delay=30000 \
     --s3.supplier.remote-dir=$S3_BUCKET \
     --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY \
     --cloud.aws.credentials.secretKey=$S3_SECRET_KEY \
@@ -382,6 +478,13 @@ step_create_stream_definition() {
   fi
 }
 
+# ----------------------------------------------------------------------
+# step_deploy_stream
+#
+# Builds the deploy properties string for the full pipeline and converts it
+# to JSON using build_json_from_props. Submits the deploy request to SCDF
+# via REST API. Logs the deploy JSON and result for troubleshooting.
+# ----------------------------------------------------------------------
 step_deploy_stream() {
   source_properties
   echo "[STEP] Deploy stream"
@@ -569,19 +672,33 @@ test_s3_source() {
 }
 
 
-# --- Test textProc Pipeline ---
+# ----------------------------------------------------------------------
+# test_textproc_pipeline
+#
+# Creates and deploys a test stream: s3 | textProc | log. This function:
+#   - Destroys any existing test-textproc-pipeline stream and processor registration
+#   - Registers the textProc processor with SCDF (using the latest Docker image)
+#   - Builds a stream definition connecting s3 -> textProc -> log
+#   - Sets up all required deploy properties, including S3 credentials, channel bindings,
+#     and logging levels for each app
+#   - Converts deploy properties to JSON and deploys the stream via SCDF REST API
+#   - Logs the deploy JSON and provides instructions for testing
+#
+# Usage: test_textproc_pipeline
+# ----------------------------------------------------------------------
 test_textproc_pipeline() {
   echo "[TEST-TEXTPROC] Creating test stream: s3 | textProc | log"
   local TEST_STREAM_NAME="test-textproc-pipeline"
-  # Destroy any existing test stream and wait for full deletion
+  # Destroy any existing test stream and definitions to ensure a clean slate
   curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
   curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
-  # Register textProc processor
+  # Remove any previous textProc processor registration
   curl -s -X DELETE "$SCDF_API_URL/apps/processor/textProc" > /dev/null
   sleep 1
+  # Register the textProc processor with the latest Docker image
   curl -s -X POST "$SCDF_API_URL/apps/processor/textProc" -d "uri=docker:dbbaskette/textproc:latest" -d "force=true"
 
-  # Wait for deletion
+  # Wait for the processor deregistration to propagate before proceeding
   for i in {1..20}; do
     DEF_STATUS=$(curl -s "$SCDF_API_URL/apps/processor/textProc")
     if [[ "$DEF_STATUS" == *"not found"* ]]; then
@@ -589,11 +706,12 @@ test_textproc_pipeline() {
     fi
     sleep 1
   done
-  # Create the test stream definition with full s3 source properties
+  # Build the test stream definition with all required S3 source properties
   STREAM_DEF="s3 \
     --s3.common.endpoint-url=$S3_ENDPOINT \
     --s3.common.path-style-access=true \
     --s3.supplier.local-dir=/tmp/test \
+    --s3.supplier.polling-delay=30000 \
     --s3.supplier.remote-dir=$S3_BUCKET \
     --cloud.aws.credentials.accessKey=$S3_ACCESS_KEY \
     --cloud.aws.credentials.secretKey=$S3_SECRET_KEY \
@@ -607,8 +725,46 @@ test_textproc_pipeline() {
     -d "name=$TEST_STREAM_NAME" \
     -d "definition=$STREAM_DEF"
   # Build deploy properties string and JSON
-  DEPLOY_PROPS="app.textProc.environment.S3_ENDPOINT=${S3_ENDPOINT},app.textProc.environment.S3_ACCESS_KEY=${S3_ACCESS_KEY},app.textProc.environment.S3_SECRET_KEY=${S3_SECRET_KEY},app.textProc.spring.profiles.active=scdf" 
+ 
+  DEPLOY_PROPS="app.textProc.spring.profiles.active=scdf,deployer.textProc.kubernetes.environmentVariables=S3_ENDPOINT=${S3_ENDPOINT};S3_ACCESS_KEY=${S3_ACCESS_KEY};S3_SECRET_KEY=${S3_SECRET_KEY}"
+  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.destination=s3-to-textproc"
+  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.app.s3.source=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.com.amazonaws=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.aws=INFO"
+  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.file=INFO"
+  
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.function.definition=textProc"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=s3-to-textproc"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.integration=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=INFO"
+
+
+#spring.cloud.stream.bindings.textProc-in-0.destination=YOUR_INPUT_QUEUE
+#spring.cloud.stream.bindings.textProc-in-0.group=YOUR_GROUP
+#spring.cloud.stream.bindings.textProc-out-0.destination=YOUR_OUTPUT_QUEUE
+#spring.cloud.stream.bindings.textProc-out-0.group=YOUR_GROUP
+#s3-to-textproc.test-textproc-pipeline
+
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream=INFO"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.integration=INFO"
+  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+
+
+
   DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS")
+  echo "DEPLOY_JSON for $TEST_STREAM_NAME: $DEPLOY_JSON" | tee -a "$LOGFILE"
   # Deploy the test stream with processor environment variables and spring.profiles.active=scdf
   curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" \
     -H 'Content-Type: application/json' \

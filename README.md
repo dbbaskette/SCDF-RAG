@@ -179,6 +179,29 @@ This project contains scripts and configuration to deploy a Spring Cloud Data Fl
 
 ### Usage
 
+---
+
+## Script Functions and Internals
+
+The `create_stream.sh` script is now thoroughly documented for maintainers and advanced users. Each function includes a block docstring and inline comments to explain its purpose, arguments, and implementation details. This makes it easy to understand, modify, and debug the stream automation pipeline.
+
+### Key Functions:
+
+- **set_minio_creds**: Fetches MinIO (S3) credentials from Kubernetes secrets and exports them as environment variables.
+- **source_properties**: Loads cluster and stream configuration from `scdf_env.properties` and `create_stream.properties`.
+- **build_json_from_props**: Converts a comma-separated string of key=value pairs into a JSON object for SCDF REST API deploy requests, with special handling for environment variable formatting.
+- **extract_and_log_api_messages**: Parses and logs errors/warnings from SCDF REST API responses.
+- **step_destroy_stream**: Removes any existing SCDF stream deployment, definition, and orphaned Kubernetes resources.
+- **step_register_processor_apps**: Registers all custom processor apps as SCDF processor apps using Docker image URIs.
+- **step_register_default_apps**: Registers default source (S3) and sink (log) apps using Maven URIs, and sets their options.
+- **step_create_stream_definition**: Builds and submits the stream definition to SCDF via REST API.
+- **step_deploy_stream**: Builds deploy properties, converts them to JSON, and submits the deploy request to SCDF.
+- **test_textproc_pipeline**: Creates and deploys a test stream (`s3 | textProc | log`), setting all required bindings, credentials, and logging. Useful for end-to-end pipeline verification and troubleshooting.
+
+All functions are designed for modular use and robust error handling. See the script source for detailed documentation.
+
+---
+
 1. **Edit `create_stream.properties`**
     - Set your S3/MinIO endpoint, bucket, and credentials.
     - Set your RabbitMQ host and credentials (e.g., `RABBIT_USER`, `RABBIT_PASS`).
