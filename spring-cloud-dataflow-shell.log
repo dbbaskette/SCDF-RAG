@@ -1,118 +1,16 @@
-1746060022817:apps list
-1746060024786:spp list
-1746060026868:app list
-1746060032133:spp describe
-1746060033929:app
-1746060035864:app help
-1746060036925:help
-1746060048491:app info -name s3 -type source
-1746060055361:help
-1746060065104:app info
-1746060070524:app info help
-1746060074324:help app info
-1746060083116:app info --name s3 --type source
-1746060177072:exit
-1746070297517:platform list
-1746070300568:help
-1746070343915:dataflow config info
-1746070416211:exit
-1746125530999:apps list
-1746125532943:app list
-1746125553838:app describe --name s2 --type source
-1746125559720:app describe -name s2 -type source
-1746125568877:app info  --name s2 --type source
-1746125574508:app info  --name s3 --type source
-1746125609499:app import --uri https://dataflow.spring.io/rabbitmq-maven-latest --force
-1746125670505:exit
-1746126043800:app import --uri https://dataflow.spring.io/rabbitmq-maven-latest --force
-1746126437662:exit
-1746127041451:app import --uri https://dataflow.spring.io/rabbitmq-maven-latest --force
-1746127054644:app info  --name s3 --type source
-1746127082185:exit
-1746193310712:stream list
-1746193322225:stream destroy --name rag-pipeline
-1746193326592:stream create --name rag-pipeline \\\n  --definition "s3 \\\n    --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --path-style-access=true \\\n    --remote-dir=test \\\n    --file-transfer-mode=file \\\n    --region=us-east-1 \\\n    --access-key=admin \\\n    --secret-key=QmY09W3IyP \\\n    --stack.auto=false \\\n    --logging.level.org.springframework.integration.aws=INFO \\\n    --logging.level.org.springframework.integration.file=INFO \\\n    --logging.level.com.amazonaws=INFO \\\n    --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\n  | log --expression=headers" \\\n  --deploy
-1746193395298:stacktrace
-1746193432068:stream create --name rag-pipeline \\\n  --definition "s3 \\\n    --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --path-style-access=true \\\n    --remote-dir=test \\\n    --file-transfer-mode=file \\\n    --region=us-east-1 \\\n    --access-key=admin \\\n    --secret-key=QmY09W3IyP \\\n    --stack.auto=false \\\n    --logging.level.org.springframework.integration.aws=INFO \\\n    --logging.level.org.springframework.integration.file=INFO \\\n    --logging.level.com.amazonaws=INFO \\\n    --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\n  | log --expression=headers" \\\n  --deploy
-1746193444510:stream create --name rag-pipeline \\\n>   --definition "s3 \\\ndquote>     --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\ndquote>     --path-style-access=true \\\ndquote>     --remote-dir=test \\\ndquote>     --file-transfer-mode=file \\\ndquote>     --region=us-east-1 \\\ndquote>     --access-key=admin \\\ndquote>     --secret-key=QmY09W3IyP \\\ndquote>     --stack.auto=false \\\ndquote>     --logging.level.org.springframework.integration.aws=INFO \\\ndquote>     --logging.level.org.springframework.integration.file=INFO \\\ndquote>     --logging.level.com.amazonaws=INFO \\\ndquote>     --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\ndquote>   | log --expression=headers" \\\n>   --deploy\nFailed to convert from type [java.lang.String] to type [boolean] for value [null]; nested exception is java.lang.IllegalArgumentException: A null value cannot be assigned to a primitive type\nDetails of the error have been omitted. You can use the stacktrace command to print the full stacktrace.
-1746193465334:stream create --name rag-pipeline \\\n  --definition "s3 \\\n    --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --path-style-access=true \\\n    --remote-dir=test \\\n    --file-transfer-mode=file \\\n    --region=us-east-1 \\\n    --access-key=admin \\\n    --secret-key=QmY09W3IyP \\\n    --stack.auto=false \\\n    --logging.level.org.springframework.integration.aws=INFO \\\n    --logging.level.org.springframework.integration.file=INFO \\\n    --logging.level.com.amazonaws=INFO \\\n    --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\n  | log --expression=headers" \\\n  --deploy
-1746193479323:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --stack.auto=false --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --deploy
-1746193678497:stream create --name rag-pipeline \\\n  --definition "s3 \\\n    --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --path-style-access=true \\\n    --remote-dir=test \\\n    --file-transfer-mode=file \\\n    --region=us-east-1 \\\n    --access-key=admin \\\n    --secret-key=QmY09W3IyP \\\n    --stack.auto=false \\\n    --logging.level.org.springframework.integration.aws=INFO \\\n    --logging.level.org.springframework.integration.file=INFO \\\n    --logging.level.com.amazonaws=INFO \\\n    --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\n  | log --expression=headers" \\\n  --deploy
-1746193698163:stream destroy --name rag-pipeline
-1746193713066:stream create --name rag-pipeline \\\n  --definition "s3 \\\n    --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --path-style-access=true \\\n    --remote-dir=test \\\n    --file-transfer-mode=file \\\n    --region=us-east-1 \\\n    --access-key=admin \\\n    --secret-key=QmY09W3IyP \\\n    --logging.level.org.springframework.integration.aws=INFO \\\n    --logging.level.org.springframework.integration.file=INFO \\\n    --logging.level.com.amazonaws=INFO \\\n    --logging.level.org.springframework.cloud.stream.app.s3.source=INFO \\\n  | log --expression=headers" \\\n  --deploy \\\n  --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746193724631:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --deploy --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746193804889:stream destory --name rag-pipeline
-1746193811250:stream destroy --name rag-pipeline
-1746193838296:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --deploy --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1" --deploy   --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746193866584:streams list
-1746193870744:stream list
-1746193893886:stream destroy --name rag-pipeline
-1746193933435:stream create --name rag-pipeline --definition "s3 --endpoint-url=[http://minio.scdf.svc.cluster.local](http://minio.scdf.svc.cluster.local):9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --deploy --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws"
-1746193937416:stream list
-1746193977550:stacktrace
-1746193982702:stream destroy --name rag-pipeline
-1746193984891:stream create --name rag-pipeline --definition "s3 --endpoint-url=[http://minio.scdf.svc.cluster.local](http://minio.scdf.svc.cluster.local):9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --deploy --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws"
-1746193988282:stacktrace
-1746194040574:stream destroy --name rag-pipeline
-1746194046423:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers" --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1" --deploy
-1746194077061:stream destroy --name rag-pipeline
-1746194079598:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers"
-1746194090076:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746194283087:stream destroy --name rag-pipeline
-1746194288997:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP --logging.level.org.springframework.integration.aws=INFO --logging.level.org.springframework.integration.file=INFO --logging.level.com.amazonaws=INFO --logging.level.org.springframework.cloud.stream.app.s3.source=INFO | log --expression=headers"
-1746194297388:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.region.static=us-east-1,app.s3.spring.cloud.aws.region.static=us-east-1,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746194870214:stream destroy --name rag-pipeline
-1746194871702:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP | log --expression=headers"
-1746194878060:stream deploy --name rag-pipeline
-1746195078172:stream destroy --name rag-pipeline
-1746195098119:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP | log --expression=headers"
-1746195103761:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.region.static=us-east-1,app.s3.spring.cloud.aws.region.static=us-east-1,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746195187745:stream destroy --name rag-pipeline
-1746195189624:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP | log --expression=headers"
-1746195192323:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.stack.auto=false,app.s3.cloud.aws.region.auto=false,app.s3.cloud.aws.region.static=us-east-1,app.s3.spring.cloud.aws.region.static=us-east-1,app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,app.s3.com.amazonaws.sdk.ec2MetadataServiceEndpointOverride=no-endpoint,deployer.s3.kubernetes.environmentVariables=AWS_EC2_METADATA_DISABLED=true,AWS_REGION=us-east-1,AWS_DEFAULT_REGION=us-east-1"
-1746195368013:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,deployer.s3.kubernetes.environmentVariables=AWS_ACCESS_KEY_ID=admin,AWS_SECRET_ACCESS_KEY=QmY09W3IyP"
-1746195370684:stream destroy --name rag-pipeline
-1746195372628:stream create --name rag-pipeline --definition "s3 --endpoint-url=http://minio.scdf.svc.cluster.local:9000 --path-style-access=true --remote-dir=test --file-transfer-mode=file --region=us-east-1 --access-key=admin --secret-key=QmY09W3IyP | log --expression=headers"
-1746195376152:stream deploy --name rag-pipeline --properties "app.s3.cloud.aws.credentials.use-default-aws-credentials-chain=false,app.s3.cloud.aws.credentials.instance-profile=false,app.s3.com.amazonaws.sdk.disableEc2Metadata=true,deployer.s3.kubernetes.environmentVariables=AWS_ACCESS_KEY_ID=admin,AWS_SECRET_ACCESS_KEY=QmY09W3IyP"
-1746195902325:stream list
-1746195929594:stream destroy --name rag-pipeline
-1746196022096:stream list
-1746206277085:stream destroy rag-pipeline
-1746206278709:stream create rag-pipeline --definition "s3 --s3.bucket=test --s3.prefix=demo/ --s3.filename-pattern=*.pdf --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 --s3.access-key=minio --s3.secret-key=PuoDd9Utvb >output | pdf-preprocessor | log"\\ns3 --s3.bucket=test --s3.prefix=demo/ --s3.filename-pattern=*.pdf --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 --s3.access-key=minio --s3.secret-key=PuoDd9Utvb
-1746206302082:stream destroy rag-pipeline
-1746469221498:s3-source --s3.common.endpoint-url=http://minio.scdf.svc.cluster.local:9000, --s3.supplier.remote-dir=/test\n --cloud.aws.credentials.accessKey=admin --cloud.aws.credentials.secretKey=QmY09W3IyP\n --cloud.aws.stack.auto=false --cloud.aws.region.static=us-east-1 --outputType=application/octet-stream\n --JBP_CONFIG_SPRING_AUTO_RECONFIGURATION='{enabled: false}'
-1746469273775:app
-1746469276079:app list
-1746469277634:help
-1746470585535:stream list
-1746470588782:stream
-1746470589817:help
-1746470601897:stream info rag-pipeline
-1746472884579:stream deploy my-s3-stream --properties "app.s3-source.s3.endpoint-url=http://minio.scdf.svc.cluster.local:9000,app.s3-source.s3.access-key=admin,app.s3-source.s3.secret-key=QmY09W3IyP,app.s3-source.s3.path-style-access=true,app.s3-source.s3.region=us-east-1"
-1746475328363:stream create --name s3stream --definition "s3-source --s3.endpoint=http://minio.scdf.svc:9000 --s3.access-keyadmin > --s3.secret-key=3e73Q6lFIa --s3.bucket=test --s3.region=us-east-1 --s3.path-style-access=true | log" --deploy
-1746475345336:stream create --name s3stream --definition "s3-source --s3.endpoint=http://minio.scdf.svc:9000 --s3.access-key=admin --s3.secret-key=3e73Q6lFIa --s3.bucket=test --s3.region=us-east-1 --s3.path-style-access=true | log" --deploy
-1746475367238:stream create --name s3stream --definition "s3 --s3.endpoint=http://minio.scdf.svc:9000 --s3.access-key=admin --s3.secret-key=3e73Q6lFIa --s3.bucket=test --s3.region=us-east-1 --s3.path-style-access=true | log" --deploy
-1746475520565:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746475638846:[Hstream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746475657076:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746475813599:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746475969930:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.path-style-access=true \\\n  --cloud.aws.stack.auto=false \\\n| log" --deploy
-1746476154817:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.path-style-access=true \\\n  --cloud.aws.stack.auto=false \\\n--cloud.aws.credentials.accessKey=admin \\\n--cloud.aws.credentials.secretKey=3e73Q6lFIa \\\n--cloud.aws.region.static=us-east-1 \\\n--cloud.aws.s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \n| log" --deploy
-1746476264172:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746477020329:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --s3.bucket=test \\\n  --s3.region=us-east-1 \\\n  --s3.path-style-access=true \\\n| log" --deploy
-1746477242610:stream create --name s3stream --definition "s3 \\\n  --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n  --access-key=admin \\\n  --secret-key=3e73Q6lFIa \\\n  --bucket=test \\\n  --region=us-east-1 \\\n  --path-style-access=true \\\n| log" --deploy
-1746477279195:stream create --name s3stream --definition "s3 \\\n  --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n  --access-key=admin \\\n  --secret-key=3e73Q6lFIa \\\n  --bucket=test \\\n  --s3.region=us-east-1 \\\n  --path-style-access=true \\\n| log" --deploy
-1746477431709:stream create --name s3stream --definition "s3 \\\n  --endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.access-key=admin \\\n  --s3.secret-key=3e73Q6lFIa \\\n  --remote-dir=test \\\n  --s3.region=us-east-1 \\\n  --path-style-access=true \\\n| log" --deploy
-1746478017532:dataflow:>
-1746478024537:stream create --name s3stream --definition "s3 \\\n  --spring.cloud.aws.s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --spring.cloud.aws.credentials.accessKey=admin \\\n  --spring.cloud.aws.credentials.secretKey=3e73Q6lFIa \\\n  --s3.supplier.remoteDir=test \\\n  --spring.cloud.aws.region.static=us-east-1 \\\n  --s3.client.path-style-access-enabled=true \\\n| log" --deploy
-1746478141224:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.credentials.accessKey=admin \\\n  --s3.credentials.secretKey=3e73Q6lFIa \\\n  --s3.supplier.remoteDir=test \\\n  --s3.region.static=us-east-1 \\\n  --s3.client.path-style-access-enabled=true \\\n| log" --deploy
-1746478814481:streams list
-1746478817946:stream list
-1746478824726:stream destroy all
-1746478830637:help
-1746478839508:stream all destroy
-1746479039146:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.accessKey=admin \\\n  --s3.secretKey=3e73Q6lFIa \\\n  --s3.supplier.remoteDir=test \\\n  --s3.region.static=us-east-1 \\\n  --s3.client.path-style-access-enabled=true \\\n  --s3.path-style-access=true\n| log" --deploy
-1746479208874:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.accessKey=admin \\\n  --s3.secretKey=3e73Q6lFIa \\\n  --s3.supplier.remoteDir=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --s3.client.path-style-access-enabled=true \\\n  --s3.path-style-access=true\n| log" --deploy
-1746479476443:stream create --name s3stream --definition "s3 \\\n  --s3.endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n  --s3.accessKey=admin \\\n  --s3.secretKey=3e73Q6lFIa \\\n  --s3.supplier.remoteDir=test \\\n  --s3.region=us-east-1 \\\n  --cloud.aws.region.static=us-east-1 \\\n  --cloud.aws.stack.auto=false\n  --s3.client.path-style-access-enabled=true \\\n  --path-style-access=true\n| log" --deploy
-1746479668711:stream create --name s3stream --definition "s3 \\\n    --s3.common.endpoint-url=http://minio.scdf.svc.cluster.local:9000 \\\n    --s3.common.path-style-access=true\n    --s3.supplier.local-dir=/tmp/test \\\n    --s3.supplier.remote-dir=test\n    --cloud.aws.credentials.accessKey=admin\n    --cloud.aws.credentials.secretKey=3e73Q6lFIa\n    --file.consumer.mode=ref\n    --cloud.aws.region.static=us-east-1\n    --cloud.aws.stack.auto=false\n| log" --deploy
-1746542625796:stream create --name test-s3 --definition "s3 --destination=s3-to-pdf | log" --deploy
+1746579844930:app list
+1746639624728:exit
+1746639769943:q
+1746639772826:exit
+1746640021051:help
+1746640034537:dataflow config server
+1746640047242:dataflow config server localhost:30080
+1746640055457:dataflow config server http://localhost:30080
+1746640062554:stream list
+1746640071371:stream destroy all
+1746640076374:helkp
+1746640078082:help
+1746640082494:stream all destory
+1746640090735:stream all destroy
+1746640095543:app list
+1746645766103:exit

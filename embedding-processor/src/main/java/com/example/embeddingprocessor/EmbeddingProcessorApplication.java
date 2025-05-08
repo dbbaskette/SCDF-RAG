@@ -46,11 +46,15 @@ public class EmbeddingProcessorApplication {
         return message -> {
             String text = message.getPayload();
             String filename = message.getHeaders().getOrDefault("filename", "unknown").toString();
+            // Log a preview of the text (first 200 chars or full if short)
+            String preview = text.length() > 200 ? text.substring(0, 200) + "..." : text;
+            log.debug("[EMBED][PREVIEW] filename: {} | text preview: {}", filename, preview);
             log.info("[EMBED] Received text for embedding (filename: {}), length: {}", filename, text.length());
             try {
                 OllamaOptions options = OllamaOptions.builder().build();
                 EmbeddingRequest request = new EmbeddingRequest(List.of(text), options);
                 EmbeddingResponse response = embeddingModel.call(request);
+                log.debug("[EMBED][RESPONSE] embeddingModel.call returned: {}", response);
                 float[] embeddingArray = response.getResults().get(0).getOutput();
                 List<Double> embedding = new ArrayList<>();
                 for (float v : embeddingArray) embedding.add((double) v);
