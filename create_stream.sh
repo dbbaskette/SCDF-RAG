@@ -215,8 +215,6 @@ build_json_from_props() {
     val="$(echo -n "$val" | xargs)"
     # Generalize: convert all semicolons to commas in every property value
     val="${val//;/,}"
-    # Generalize: convert all semicolons to commas in every property value
-    val="${val//;/,}"
     [[ -z "$key" ]] && continue
     if [[ $first -eq 1 ]]; then
       json="\"$key\":\"$val\""
@@ -225,7 +223,6 @@ build_json_from_props() {
       json+=",\"$key\":\"$val\""
     fi
   done
-  # Note: All property values have semicolons converted to commas above.
   # Note: All property values have semicolons converted to commas above.
 
   # Add the special property at the end (if present)
@@ -792,7 +789,7 @@ test_textproc_pipeline() {
   # DEPLOY_PROPS+=",app.pgcopy.pgcopy.columns=content;embedding;metadata"
   # DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=text;embedding;metadata"
   DEPLOY_PROPS+=",app.pgcopy.pgcopy.columns=embedding"
-DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=embedding"
+  DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=embedding"
   DEPLOY_PROPS+=",app.pgcopy.spring.cloud.config.enabled=false"
 
   # pgcopy SQL-level logging
@@ -812,17 +809,14 @@ DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=embedding"
   
   DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS")
   echo "DEPLOY_JSON for $TEST_STREAM_NAME: $DEPLOY_JSON" >> "$LOGFILE"
-  echo "DEPLOY_JSON for $TEST_STREAM_NAME: $DEPLOY_JSON" >> "$LOGFILE"
   # Deploy the test stream with processor environment variables and spring.profiles.active=scdf
   curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" \
     -H 'Content-Type: application/json' \
     -d "$DEPLOY_JSON" > /dev/null
   echo "[TEST-TEXTPROC] Test stream deployed. To test, add a file to your configured S3 bucket and check the pgcopy sink output."
-    -d "$DEPLOY_JSON" > /dev/null
-  echo "[TEST-TEXTPROC] Test stream deployed. To test, add a file to your configured S3 bucket and check the pgcopy sink output."
 }
 
-# --- Test Embed Stream ---
+# --- Test Embed Stream ---``
 if [[ "$1" == "--test-embed" ]]; then
   echo "[TEST-EMBED] Creating test stream: file source | embedding-processor | log sink"
   TEST_STREAM_NAME="test-embed-stream"
@@ -871,7 +865,6 @@ show_menu() {
   echo "8) View registered processor apps"
   echo "9) View default apps"
   echo "t1) Test S3 source (s3 | log)"
-  echo "t2) Test textProc pipeline (s3 | textProc | embedProc | postgres)"
   echo "t2) Test textProc pipeline (s3 | textProc | embedProc | postgres)"
   echo "q) Exit"
   echo -n "Select a step to run [1-9, t1, t2, q to quit]: "
