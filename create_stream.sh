@@ -535,7 +535,6 @@ step_deploy_stream() {
   DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
 
 
-
   if [[ -n "$EXTRA_DEPLOY_PROPS" ]]; then
     DEPLOY_PROPS+=",$EXTRA_DEPLOY_PROPS"
   fi
