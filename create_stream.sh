@@ -728,7 +728,6 @@ test_textproc_pipeline() {
     sleep 1
   done
   # Build the test stream definition with all required S3 source properties, now using pgcopy as sink
-  # Build the test stream definition with all required S3 source properties, now using pgcopy as sink
   STREAM_DEF="s3 \
     --s3.common.endpoint-url=$S3_ENDPOINT \
     --s3.common.path-style-access=true \
@@ -743,20 +742,15 @@ test_textproc_pipeline() {
     --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
     --s3.supplier.list-only=true \
     | textProc | embedProc | pgcopy"
-    | textProc | embedProc | pgcopy"
   curl -s -X POST "$SCDF_API_URL/streams/definitions" \
     -d "name=$TEST_STREAM_NAME" \
-    -d "definition=$STREAM_DEF" > /dev/null
     -d "definition=$STREAM_DEF" > /dev/null
   # Build deploy properties string and JSON
  
   DEPLOY_PROPS="deployer.textProc.kubernetes.environmentVariables=S3_ENDPOINT=${S3_ENDPOINT};S3_ACCESS_KEY=${S3_ACCESS_KEY};S3_SECRET_KEY=${S3_SECRET_KEY}"
 
   # s3 source
-
-  # s3 source
   DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.destination=s3-to-textproc"
-  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration=INFO"
@@ -765,11 +759,9 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.s3.logging.level.com.amazonaws=INFO"
 
   # textProc processor
-  # textProc processor
   DEPLOY_PROPS+=",app.textProc.spring.profiles.active=scdf"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.function.definition=textProc"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=s3-to-textproc"
-  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-embedproc"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=INFO"
@@ -779,7 +771,6 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=INFO"
 
-  # embedProc processor
   # embedProc processor
   DEPLOY_PROPS+=",app.embedProc.spring.profiles.active=scdf"
   DEPLOY_PROPS+=",app.embedProc.spring.cloud.function.definition=embedProc"
