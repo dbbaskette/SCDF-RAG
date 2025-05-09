@@ -5,17 +5,19 @@
 # This script automates SCDF stream creation using only REST API calls.
 #
 # USAGE:
+#   ./create_stream.sh --test    # Interactive mode: run individual major steps or test streams from a menu (updated for embedProc in textProc pipeline)
 #   ./create_stream.sh           # Runs the full pipeline (destroy, register, create, deploy, view)
 #   ./create_stream.sh --test    # Interactive mode: run individual major steps or test streams from a menu
 #   ./create_stream.sh --test-embed  # Deploys a test stream for embedding processor verification
 #
 # In --test mode, you can select and run any major step or test stream independently, similar to the SCDF install script.
+# The textProc pipeline now includes embedProc: 's3 | textProc | embedProc | log'.
 #
-# Test stream options:
+# Test stream options (updated):
 #   - Test S3 source: Deploys 's3 | log' to verify S3 source and log sink
-#   - Test textProc pipeline: Deploys 's3 | textProc | log' to verify S3 source, textProc processor, and log sink
+#   - Test textProc pipeline: Deploys 's3 | textProc | embedProc | log' to verify S3 source, textProc processor, embedProc embedding processor, and log sink
 #   - Delete S3 source test stream
-#   - Delete textProc pipeline test stream
+#   - Delete textProc pipeline test stream (now includes embedProc)
 
 # Ensure K8S_NAMESPACE is set, default to 'scdf' if not
 K8S_NAMESPACE=${K8S_NAMESPACE:-scdf}
@@ -692,21 +694,25 @@ test_textproc_pipeline() {
   # Destroy any existing test stream and definitions to ensure a clean slate
   curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
   curl -s -X DELETE "$SCDF_API_URL/streams/definitions/$TEST_STREAM_NAME" > /dev/null
-  # Remove any previous textProc processor registration
+  # Remove any previous textProc and embedProc processor registrations
   curl -s -X DELETE "$SCDF_API_URL/apps/processor/textProc" > /dev/null
+  curl -s -X DELETE "$SCDF_API_URL/apps/processor/embedProc" > /dev/null
   sleep 1
   # Register the textProc processor with the latest Docker image
   curl -s -X POST "$SCDF_API_URL/apps/processor/textProc" -d "uri=docker:dbbaskette/textproc:latest" -d "force=true"
+  # Register the embedProc processor with the latest Docker image
+  curl -s -X POST "$SCDF_API_URL/apps/processor/embedProc" -d "uri=docker:dbbaskette/embedproc:latest" -d "force=true"
 
   # Wait for the processor deregistration to propagate before proceeding
   for i in {1..20}; do
     DEF_STATUS=$(curl -s "$SCDF_API_URL/apps/processor/textProc")
-    if [[ "$DEF_STATUS" == *"not found"* ]]; then
+    DEF_STATUS_EMBED=$(curl -s "$SCDF_API_URL/apps/processor/embedProc")
+    if [[ "$DEF_STATUS" == *"not found"* && "$DEF_STATUS_EMBED" == *"not found"* ]]; then
       break
     fi
     sleep 1
   done
-  # Build the test stream definition with all required S3 source properties
+  # Build the test stream definition with all required S3 source properties, now including embedProc
   STREAM_DEF="s3 \
     --s3.common.endpoint-url=$S3_ENDPOINT \
     --s3.common.path-style-access=true \
@@ -720,13 +726,13 @@ test_textproc_pipeline() {
     --spring.cloud.config.enabled=false \
     --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
     --s3.supplier.list-only=true \
-    | textProc | log"
+    | textProc | embedProc | log"
   curl -s -X POST "$SCDF_API_URL/streams/definitions" \
     -d "name=$TEST_STREAM_NAME" \
     -d "definition=$STREAM_DEF"
   # Build deploy properties string and JSON
  
-  DEPLOY_PROPS="app.textProc.spring.profiles.active=scdf,deployer.textProc.kubernetes.environmentVariables=S3_ENDPOINT=${S3_ENDPOINT};S3_ACCESS_KEY=${S3_ACCESS_KEY};S3_SECRET_KEY=${S3_SECRET_KEY}"
+  DEPLOY_PROPS="deployer.textProc.kubernetes.environmentVariables=S3_ENDPOINT=${S3_ENDPOINT};S3_ACCESS_KEY=${S3_ACCESS_KEY};S3_SECRET_KEY=${S3_SECRET_KEY}"
   DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.destination=s3-to-textproc"
   DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=$TEST_STREAM_NAME"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream=INFO"
@@ -736,11 +742,12 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.s3.logging.level.com.amazonaws=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.aws=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.file=INFO"
-  
+
+  DEPLOY_PROPS+=",app.textProc.spring.profiles.active=scdf"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.function.definition=textProc"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=s3-to-textproc"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=$TEST_STREAM_NAME"
-  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-embedproc"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.group=$TEST_STREAM_NAME"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=INFO"
@@ -748,14 +755,20 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=INFO"
 
+  DEPLOY_PROPS+=",app.embedProc.spring.profiles.active=scdf"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.function.definition=embedProc"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.destination=textproc-to-embedproc"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.destination=embedproc-to-log"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=DEBUG"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.integration=DEBUG"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
+  DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=DEBUG"
 
-#spring.cloud.stream.bindings.textProc-in-0.destination=YOUR_INPUT_QUEUE
-#spring.cloud.stream.bindings.textProc-in-0.group=YOUR_GROUP
-#spring.cloud.stream.bindings.textProc-out-0.destination=YOUR_OUTPUT_QUEUE
-#spring.cloud.stream.bindings.textProc-out-0.group=YOUR_GROUP
-#s3-to-textproc.test-textproc-pipeline
 
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=embedproc-to-log"
   DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=$TEST_STREAM_NAME"
   DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream=INFO"
   DEPLOY_PROPS+=",app.log.logging.level.org.springframework.integration=INFO"
@@ -821,7 +834,7 @@ show_menu() {
   echo "8) View registered processor apps"
   echo "9) View default apps"
   echo "t1) Test S3 source (s3 | log)"
-  echo "t2) Test textProc pipeline (s3 | textProc | log)"
+  echo "t2) Test textProc pipeline (s3 | textProc | embedProc | log)"
   echo "q) Exit"
   echo -n "Select a step to run [1-9, t1, t2, q to quit]: "
 }
