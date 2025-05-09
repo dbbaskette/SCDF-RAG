@@ -131,6 +131,73 @@ If any of these tools are missing, the install script will exit with an error an
 
 ## What the Scripts Do
 
+### `scdf_install_k8s.sh`
+This script automates the full installation of Spring Cloud Data Flow and all required backing services on Kubernetes. Major features:
+- **Installs PostgreSQL, RabbitMQ, MinIO, Ollama Nomic model, SCDF, and Skipper** using Helm and dynamic YAML generation.
+- **Step-by-step progress** with clear logging and error handling.
+- **Interactive test mode** (`--test`) lets you run each step independently (cleanup, install PostgreSQL, install MinIO, install Ollama, install SCDF, download SCDF Shell JAR, display management URLs).
+- **Automatic cleanup**: Removes previous installs and verifies deletion before proceeding.
+- **Management URLs**: Prints all important endpoints (SCDF dashboard, RabbitMQ, MinIO, Ollama) at the end.
+- **Configurable via `scdf_env.properties`** for cluster-wide/environment settings.
+
+#### Usage
+```sh
+./scdf_install_k8s.sh           # Full install with minimal terminal output
+./scdf_install_k8s.sh --test    # Interactive menu mode for step-by-step control
+```
+
+### `create_stream.sh`
+This script automates the creation, registration, and deployment of SCDF streams using only REST API calls. It supports both batch and interactive/test modes, and is fully documented for clarity.
+- **Registers source, processor, and sink apps** (including custom Docker images for textProc and embedProc)
+- **Builds and submits stream definitions** for pipelines like `s3 | textProc | embedProc | log`
+- **Configures all deploy properties and bindings** for correct message routing
+- **Interactive menu** (`--test`) lets you:
+  - Destroy streams
+  - Register/unregister processor or default apps
+  - Create or deploy stream definitions
+  - View stream/app status
+  - Run test pipelines (S3→log, S3→textProc→embedProc→log)
+- **Test mode for embedding processor** (`--test-embed`) creates a file→embedProc→log test stream
+- **Configurable via `create_stream.properties`** for stream/app-specific settings
+
+#### Usage
+```sh
+./create_stream.sh              # Full pipeline: destroy, register, create, deploy, view
+./create_stream.sh --test       # Interactive menu for step-by-step stream management
+./create_stream.sh --test-embed # Deploys a test stream for embedding processor verification
+```
+
+#### Example: textProc + embedProc Pipeline
+The main test pipeline is:
+```
+s3 | textProc | embedProc | log
+```
+- **s3**: Reads files from MinIO/S3.
+- **textProc**: Processes text (see below).
+- **embedProc**: Generates vector embeddings (see below).
+- **log**: Outputs results for inspection.
+
+---
+
+## Processor Apps in the Pipeline
+
+### [textProc](https://github.com/dbbaskette/textProc)
+- Custom Spring Cloud Stream processor for text extraction, normalization, or enrichment.
+- Consumes text from the S3 source, processes it, and emits to the next stage (embedProc).
+- Docker image: `dbbaskette/textproc`
+- Used as the first processor in the main pipeline.
+
+### [embedProc](https://github.com/dbbaskette/embedProc)
+- Custom Spring Cloud Stream processor for generating vector embeddings from text (e.g., using Ollama Nomic model).
+- Consumes processed text from textProc, calls the embedding model, and emits enriched messages downstream.
+- Docker image: `dbbaskette/embedproc`
+- Used as the second processor in the main pipeline.
+
+Both processor apps are registered and managed via `create_stream.sh`, and can be updated independently. Their source code, Dockerfiles, and build instructions are available in their respective repositories.
+
+---
+
+
 - Cleans up any previous SCDF, RabbitMQ, and namespace resources, verifying deletion before continuing.
 - Installs RabbitMQ via Helm and waits for readiness.
 - Installs SCDF (with Skipper and PostgreSQL) via Helm and waits for readiness.

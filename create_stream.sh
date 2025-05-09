@@ -1,24 +1,33 @@
 #!/bin/bash
 #
-# create_stream.sh (REST API version, step-by-step)
+# create_stream.sh — Spring Cloud Data Flow Stream Automation (REST API version)
 #
-# This script automates SCDF stream creation using only REST API calls.
+# Automates the full lifecycle of SCDF streams on Kubernetes using REST API calls.
+# Key features:
+#   - Registers source, processor, and sink apps (including custom Docker images)
+#   - Builds and submits stream definitions (e.g. s3 | textProc | embedProc | log)
+#   - Configures all deploy properties and bindings for correct message routing
+#   - Supports interactive test mode for step-by-step management
+#   - Fully documented for clarity and maintainability
 #
 # USAGE:
-#   ./create_stream.sh --test    # Interactive mode: run individual major steps or test streams from a menu (updated for embedProc in textProc pipeline)
-#   ./create_stream.sh           # Runs the full pipeline (destroy, register, create, deploy, view)
-#   ./create_stream.sh --test    # Interactive mode: run individual major steps or test streams from a menu
+#   ./create_stream.sh           # Full pipeline: destroy, register, create, deploy, view
+#   ./create_stream.sh --test    # Interactive menu for step-by-step stream management
 #   ./create_stream.sh --test-embed  # Deploys a test stream for embedding processor verification
 #
-# In --test mode, you can select and run any major step or test stream independently, similar to the SCDF install script.
-# The textProc pipeline now includes embedProc: 's3 | textProc | embedProc | log'.
+# Stream pipeline example:
+#   s3 | textProc | embedProc | log
+#   - s3: Reads files from MinIO/S3
+#   - textProc: Processes text (https://github.com/dbbaskette/textProc)
+#   - embedProc: Generates vector embeddings (https://github.com/dbbaskette/embedProc)
+#   - log: Outputs results for inspection
 #
-# Test stream options (updated):
-#   - Test S3 source: Deploys 's3 | log' to verify S3 source and log sink
-#   - Test textProc pipeline: Deploys 's3 | textProc | embedProc | log' to verify S3 source, textProc processor, embedProc embedding processor, and log sink
-#   - Delete S3 source test stream
-#   - Delete textProc pipeline test stream (now includes embedProc)
-
+# All configuration is loaded from:
+#   - scdf_env.properties: Cluster-wide and SCDF platform settings
+#   - create_stream.properties: Stream/app-specific settings
+#
+# For more details, see the README and function-level comments below.
+#
 # Ensure K8S_NAMESPACE is set, default to 'scdf' if not
 K8S_NAMESPACE=${K8S_NAMESPACE:-scdf}
 

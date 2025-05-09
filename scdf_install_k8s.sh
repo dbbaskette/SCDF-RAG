@@ -1,6 +1,23 @@
 #!/bin/bash
-# scdf_install_k8s.sh: Installs SCDF on Kubernetes
-# Usage: ./scdf_install_k8s.sh > logs/scdf_install_k8s.log 2>&1
+#
+# scdf_install_k8s.sh — Spring Cloud Data Flow Full Installer for Kubernetes
+#
+# Automates the full deployment of Spring Cloud Data Flow (SCDF), Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama Nomic model on any Kubernetes cluster.
+# Key features:
+#   - Installs all dependencies using Helm and dynamic YAML generation
+#   - Step-by-step progress with robust error handling and logging
+#   - Interactive test mode for running each install step independently
+#   - Prints all management endpoints at the end
+#   - Configurable via scdf_env.properties (cluster-wide) and resources/scdf-values.yaml
+#
+# USAGE:
+#   ./scdf_install_k8s.sh           # Full install with minimal terminal output
+#   ./scdf_install_k8s.sh --test    # Interactive menu for step-by-step install
+#
+# Each major step is counted using step_major/STEP_TOTAL for progress tracking.
+# All logs are written to logs/scdf-install.log for troubleshooting.
+#
+# For more details, see the README and function-level comments below.
 
 # Source environment variables from scdf_env.properties
 if [ -f "$(dirname "$0")/scdf_env.properties" ]; then
