@@ -213,6 +213,8 @@ build_json_from_props() {
     # Remove possible surrounding spaces
     key="$(echo -n "$key" | xargs)"
     val="$(echo -n "$val" | xargs)"
+    # Generalize: convert all semicolons to commas in every property value
+    val="${val//;/,}"
     [[ -z "$key" ]] && continue
     if [[ $first -eq 1 ]]; then
       json="\"$key\":\"$val\""
@@ -221,6 +223,7 @@ build_json_from_props() {
       json+=",\"$key\":\"$val\""
     fi
   done
+  # Note: All property values have semicolons converted to commas above.
 
   # Add the special property at the end (if present)
   if [[ -n "$k8s_env_value" ]]; then
@@ -230,7 +233,7 @@ build_json_from_props() {
     json+="\"deployer.textProc.kubernetes.environmentVariables\":\"$k8s_env_value\""
   fi
 
-  echo "DEBUG: build_json_from_props output: {$json}" >&2
+  # echo "DEBUG: build_json_from_props output: {$json}" >&2
   echo "{$json}"
 }
 
@@ -698,7 +701,7 @@ test_s3_source() {
 # Usage: test_textproc_pipeline
 # ----------------------------------------------------------------------
 test_textproc_pipeline() {
-  echo "[TEST-TEXTPROC] Creating test stream: s3 | textProc | log"
+  echo "[TEST-TEXTPROC] Creating test stream: s3 | textProc | embedProc | pgcopy"
   local TEST_STREAM_NAME="test-textproc-pipeline"
   # Destroy any existing test stream and definitions to ensure a clean slate
   curl -s -X DELETE "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" > /dev/null
@@ -721,7 +724,7 @@ test_textproc_pipeline() {
     fi
     sleep 1
   done
-  # Build the test stream definition with all required S3 source properties, now including embedProc
+  # Build the test stream definition with all required S3 source properties, now using pgcopy as sink
   STREAM_DEF="s3 \
     --s3.common.endpoint-url=$S3_ENDPOINT \
     --s3.common.path-style-access=true \
@@ -735,63 +738,81 @@ test_textproc_pipeline() {
     --spring.cloud.config.enabled=false \
     --s3.supplier.file-transfer-mode=$S3_FILE_TRANSFER_MODE \
     --s3.supplier.list-only=true \
-    | textProc | embedProc | log"
+    | textProc | embedProc | pgcopy"
   curl -s -X POST "$SCDF_API_URL/streams/definitions" \
     -d "name=$TEST_STREAM_NAME" \
-    -d "definition=$STREAM_DEF"
+    -d "definition=$STREAM_DEF" > /dev/null
   # Build deploy properties string and JSON
  
   DEPLOY_PROPS="deployer.textProc.kubernetes.environmentVariables=S3_ENDPOINT=${S3_ENDPOINT};S3_ACCESS_KEY=${S3_ACCESS_KEY};S3_SECRET_KEY=${S3_SECRET_KEY}"
+
+  # s3 source
   DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.destination=s3-to-textproc"
-  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.s3.spring.cloud.stream.bindings.output.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.cloud.stream.app.s3.source=INFO"
   DEPLOY_PROPS+=",app.s3.logging.level.com.amazonaws=INFO"
-  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.aws=INFO"
-  DEPLOY_PROPS+=",app.s3.logging.level.org.springframework.integration.file=INFO"
 
+  # textProc processor
   DEPLOY_PROPS+=",app.textProc.spring.profiles.active=scdf"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.function.definition=textProc"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=s3-to-textproc"
-  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=$TEST_STREAM_NAME"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=${TEST_STREAM_NAME}"
   DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-embedproc"
-  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.group=$TEST_STREAM_NAME"
-  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.integration=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
   DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=INFO"
 
+  # embedProc processor
   DEPLOY_PROPS+=",app.embedProc.spring.profiles.active=scdf"
   DEPLOY_PROPS+=",app.embedProc.spring.cloud.function.definition=embedProc"
   DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.destination=textproc-to-embedproc"
-  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.group=$TEST_STREAM_NAME"
-  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.destination=embedproc-to-log"
-  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.group=$TEST_STREAM_NAME"
-  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.app.textProc.processor=INFO"
-  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream=DEBUG"
-  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.integration=DEBUG"
-  DEPLOY_PROPS+=",app.textProc.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
-  DEPLOY_PROPS+=",app.textProc.logging.level.com.baskettecase.textProc=DEBUG"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.group=${TEST_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.destination=embedproc-to-pgcopy"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream=INFO"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.integration=INFO"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.app.embedProc.processor=INFO"
+  DEPLOY_PROPS+=",app.embedProc.logging.level.com.baskettecase.embedProc=INFO"
 
+  # pgcopy sink
+  DEPLOY_PROPS+=",app.pgcopy.spring.cloud.stream.bindings.input.destination=embedproc-to-pgcopy"
+  DEPLOY_PROPS+=",app.pgcopy.spring.cloud.stream.bindings.input.group=${TEST_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.pgcopy.spring.datasource.url=jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+  DEPLOY_PROPS+=",app.pgcopy.spring.datasource.username=${POSTGRES_USER}"
+  DEPLOY_PROPS+=",app.pgcopy.spring.datasource.password=${POSTGRES_PASSWORD}"
+  DEPLOY_PROPS+=",app.pgcopy.pgcopy.tableName=items"
+  # DEPLOY_PROPS+=",app.pgcopy.pgcopy.columns=content;embedding;metadata"
+  # DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=text;embedding;metadata"
+  DEPLOY_PROPS+=",app.pgcopy.pgcopy.columns=embedding"
+DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=embedding"
+  DEPLOY_PROPS+=",app.pgcopy.spring.cloud.config.enabled=false"
 
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=embedproc-to-log"
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=$TEST_STREAM_NAME"
-  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream=INFO"
-  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.integration=INFO"
-  DEPLOY_PROPS+=",app.log.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  # pgcopy SQL-level logging
+  DEPLOY_PROPS+=",app.pgcopy.spring.jpa.show-sql=true"
+  DEPLOY_PROPS+=",app.pgcopy.spring.jpa.properties.hibernate.format_sql=true"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.hibernate.SQL=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.jdbc.core=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.jdbc.datasource=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream=INFO"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration=INFO"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration.handler.LoggingHandler=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.messaging=DEBUG"
 
-
-
+  
   DEPLOY_JSON=$(build_json_from_props "$DEPLOY_PROPS")
-  echo "DEPLOY_JSON for $TEST_STREAM_NAME: $DEPLOY_JSON" | tee -a "$LOGFILE"
+  echo "DEPLOY_JSON for $TEST_STREAM_NAME: $DEPLOY_JSON" >> "$LOGFILE"
   # Deploy the test stream with processor environment variables and spring.profiles.active=scdf
   curl -s -X POST "$SCDF_API_URL/streams/deployments/$TEST_STREAM_NAME" \
     -H 'Content-Type: application/json' \
-    -d "$DEPLOY_JSON"
-  echo "[TEST-TEXTPROC] Test stream deployed. To test, add a file to your configured S3 bucket and check the log sink output."
+    -d "$DEPLOY_JSON" > /dev/null
+  echo "[TEST-TEXTPROC] Test stream deployed. To test, add a file to your configured S3 bucket and check the pgcopy sink output."
 }
 
 # --- Test Embed Stream ---
@@ -843,7 +864,7 @@ show_menu() {
   echo "8) View registered processor apps"
   echo "9) View default apps"
   echo "t1) Test S3 source (s3 | log)"
-  echo "t2) Test textProc pipeline (s3 | textProc | embedProc | log)"
+  echo "t2) Test textProc pipeline (s3 | textProc | embedProc | postgres)"
   echo "q) Exit"
   echo -n "Select a step to run [1-9, t1, t2, q to quit]: "
 }
