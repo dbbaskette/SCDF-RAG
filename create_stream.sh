@@ -777,7 +777,9 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
   DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.cloud.stream.app.embedProc.processor=INFO"
   DEPLOY_PROPS+=",app.embedProc.logging.level.com.baskettecase.embedProc=INFO"
-
+  DEPLOY_PROPS+=",app.embedProc.spring.ai.ollama.embedding.model=${SPRING_AI_OLLAMA_EMBEDDING_MODEL}"
+  DEPLOY_PROPS+=",app.embedProc.spring.ai.ollama.base-url=${SPRING_AI_OLLAMA_BASE_URL}"
+ 
   # pgcopy sink
   DEPLOY_PROPS+=",app.pgcopy.spring.cloud.stream.bindings.input.destination=embedproc-to-pgcopy"
   DEPLOY_PROPS+=",app.pgcopy.spring.cloud.stream.bindings.input.group=${TEST_STREAM_NAME}"
@@ -798,11 +800,11 @@ test_textproc_pipeline() {
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE"
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.jdbc.core=DEBUG"
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.jdbc.datasource=DEBUG"
-  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream=INFO"
-  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration=INFO"
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration.handler.LoggingHandler=DEBUG"
   DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.messaging=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration=DEBUG"
+  DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream=DEBUG"
 
   
   
