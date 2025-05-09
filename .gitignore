@@ -2,6 +2,7 @@
 logs/install_minio_scdf.log
 logs/minio_install_scdf.log
 logs/
+*.log
 *.jar
 *.class
 *.pyc
