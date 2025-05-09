@@ -36,3 +36,6 @@
 1746798884906:app info -name pgcopy -type=sink
 1746798889007:app info -name pgcopy -type sink
 1746798895367:app info --name pgcopy --type sink
+1746813735278:stream list
+1746813743987:stream destroy all
+1746813750255:stream all destroy
