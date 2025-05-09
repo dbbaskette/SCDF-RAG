@@ -336,6 +336,27 @@ check_pgvector_extension() {
     fi
   fi
   echo "pgvector extension check complete." >>"$LOGFILE"
+  create_vector_table
+}
+
+# --- Create vector storage table in PostgreSQL ---
+create_vector_table() {
+  step_major "Create vector storage table in PostgreSQL (items)"
+  POSTGRES_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}')
+  if [[ -z "$POSTGRES_POD" ]]; then
+    echo "ERROR: Could not find PostgreSQL pod in namespace $NAMESPACE" | tee -a "$LOGFILE"
+    return 1
+  fi
+  if ! kubectl cp "resources/embed.sql" "$NAMESPACE/$POSTGRES_POD:/tmp/embed.sql"; then
+    echo "ERROR: Failed to copy embed.sql to PostgreSQL pod" | tee -a "$LOGFILE"
+    return 1
+  fi
+  kubectl exec -n "$NAMESPACE" "$POSTGRES_POD" -- bash -c "PGPASSWORD=\"$POSTGRES_PASSWORD\" psql -U $POSTGRES_USER -d $POSTGRES_DB -f /tmp/embed.sql" | tee -a "$LOGFILE"
+  if [[ $? -ne 0 ]]; then
+    echo "ERROR: Failed to create vector storage table in PostgreSQL" | tee -a "$LOGFILE"
+    return 1
+  fi
+  echo "Vector storage table created successfully." | tee -a "$LOGFILE"
 }
 
 # --- Install PostgreSQL as a standalone function ---
