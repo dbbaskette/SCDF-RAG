@@ -10,6 +10,15 @@ __pycache__/
 .DS_Store
 .env
 .history
+# VSCode settings
+.vscode/
+
+target/
+
+data/*/*
+
+
+
 sourceDocs/
 instructions.txt
 resources/scdf-values.yaml
