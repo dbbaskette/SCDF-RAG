@@ -39,3 +39,31 @@
 1746813735278:stream list
 1746813743987:stream destroy all
 1746813750255:stream all destroy
+1746816436389:se
+1746816441528:help
+1746816468845:dataflow config server http://localhost:30800
+1746816472256:dataflow config server http://localhost:30801
+1746816477867:dataflow config server localhost:30801
+1746816480583:dataflow config server localhost:30800
+1746816484717:dataflow config server localhost:300800
+1746816492465:dataflow config server --server localhost:300800
+1746816495448:help
+1746816505344:dataflow config server http://localhost:30080
+1746816510991:stream all destory
+1746816515612:stream all destroy
+1746816548648:dataflow config server http://localhost:30080
+1746816551002:stream all destroy
+1746816589510:dataflow config server http://localhost:30080
+1746816592207:stream all destroy
+1746816610059:dataflow config server http://localhost:30080
+1746816613278:app list
+1746816627548:stream all destory --help
+1746816630363:stream all destory -?
+1746816632509:stream all destory -help
+1746816638628:stream all destroy --help
+1746816641971:stream all destroy -help
+1746816673643:dataflow config server http://localhost:30080
+1746816677402:stream all destroy
+1746817860164:exit
+1746818861728:apps list
+1746818863141:app list
