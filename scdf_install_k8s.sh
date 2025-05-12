@@ -390,49 +390,11 @@ install_minio() {
   step_done "MinIO installed and ready."
 }
 
-# --- Install Ollama Nomic Model as a standalone function ---
-install_ollama_nomic() {
-  step_major "Install Ollama Nomic Model (nomic-embed-text)"
-  mkdir -p resources
-  cat > resources/ollama-nomic.yaml <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ollama-nomic
-  namespace: $NAMESPACE
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ollama-nomic
-  template:
-    metadata:
-      labels:
-        app: ollama-nomic
-    spec:
-      containers:
-        - name: ollama
-          image: contentaware/nomic-embed-text:latest
-          ports:
-            - containerPort: 11434
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ollama-nomic
-  namespace: $NAMESPACE
-spec:
-  selector:
-    app: ollama-nomic
-  ports:
-    - protocol: TCP
-      port: 11434
-      targetPort: 11434
-      nodePort: $OLLAMA_NODEPORT
-  type: NodePort
-EOF
+# --- Apply Ollama Nomic YAML ---
+apply_ollama_yaml() {
+  step_major "Apply Ollama Nomic Model YAML"
   kubectl apply -f resources/ollama-nomic.yaml >>"$LOGFILE" 2>&1
-  wait_for_ready ollama-nomic 180
+  wait_for_ready ollama-nomic-embed-deployment 180
   step_done "Ollama Nomic model deployed."
 }
 
@@ -468,7 +430,7 @@ show_menu() {
   echo "1) Cleanup previous install"
   echo "2) Install PostgreSQL"
   echo "3) Install MinIO"
-  echo "4) Install Ollama Nomic Model"
+  echo "4) Deploy Ollama Nomic Model (apply resources/ollama-nomic.yaml)"
   echo "5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
   echo "6) Download SCDF Shell JAR"
   echo "7) Register Default Apps (Docker)"
@@ -492,12 +454,13 @@ if [[ "$1" == "--test" ]]; then
         install_minio
         ;;
       4)
-        install_ollama_nomic
+        apply_ollama_yaml
         ;;
       5)
-        install_scdf
+        apply_ollama_static_yaml
         ;;
       6)
+        install_scdf
         download_shell_jar
         ;;
       7)
@@ -524,7 +487,7 @@ fi
 cleanup_previous_install
 install_postgresql
 install_minio
-install_ollama_nomic
+apply_ollama_yaml
 install_scdf
 register_default_apps_docker
 download_shell_jar
