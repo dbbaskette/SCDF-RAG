@@ -109,8 +109,8 @@ test_new_embedproc_pipeline() {
   DEPLOY_PROPS+=",app.embedProc.spring.datasource.password=${POSTGRES_PASSWORD}"
   # DEPLOY_PROPS+=",app.pgcopy.pgcopy.columns=content;embedding;metadata"
   # DEPLOY_PROPS+=",app.pgcopy.pgcopy.fields=text;embedding;metadata"
-  DEPLOY_PROPS+=",app.embedProc.embedProc.columns=embedding"
-  DEPLOY_PROPS+=",app.embedProc.embedProc.fields=embedding"
+  #DEPLOY_PROPS+=",app.embedProc.embedProc.columns=embedding"
+  #DEPLOY_PROPS+=",app.embedProc.embedProc.fields=embedding"
   # DEPLOY_PROPS+=",app.pgcopy.spring.cloud.config.enabled=false"
 
   # pgcopy SQL-level logging
