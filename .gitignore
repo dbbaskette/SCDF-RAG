@@ -22,5 +22,4 @@ data/*/*
 sourceDocs/
 instructions.txt
 resources/scdf-values.yaml
-resources/ollama-nomic.yaml
 # Add any other auto-generated files here
