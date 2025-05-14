@@ -10,12 +10,13 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 
 ## Features
 
-- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama (with both phi3 and nomic-embed-text models) via Helm and dynamic YAML generation.
-- **MinIO S3 integration**: Easily deploy a MinIO S3-compatible server for object storage in the SCDF namespace.
+- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, PostgreSQL, and your choice of storage backend—MinIO (S3) or HDFS—plus Ollama (with both phi3 and nomic-embed-text models) via Helm and dynamic YAML generation.
+- **Storage backend selection**: At install time, you are prompted to select S3 (MinIO) or HDFS. MinIO provides S3-compatible object storage; HDFS provides a distributed file system via the mdouchement/hdfs container. All credentials and endpoints are adjusted accordingly.
 - **Ollama Multi-Model embedding**: Installs both phi3 and nomic-embed-text models in a single Ollama container, exposed via NodePort 31434 for external access. The service is named `ollama`.
 - **Automatic cleanup**: Removes previous installations and verifies deletion before proceeding.
 - **NodePort exposure**: All management UIs and Ollama API are available on your localhost for easy access.
 - **Default app registration**: Downloads and registers the latest default RabbitMQ stream apps via the SCDF REST API.
+- **Unified credentials output**: All credentials and endpoints (Postgres, RabbitMQ, storage backend, Ollama, SCDF Dashboard, and namespace) are printed to the terminal, written to creds.txt, and logged in identical format for easy onboarding.
 - **Robust error handling**: Logs all actions and errors to the `logs/` directory for easy troubleshooting.
 - **Minimal terminal output**: Only step progress, completion, and management URLs are printed to the terminal; all INFO and STATUS details are in the log file.
 - **Fully commented and maintainable**: The scripts are easy to follow and modify.
@@ -37,8 +38,76 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
     ```sh
     ./scdf_install_k8s.sh
     ```
-   - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama with both phi3 and nomic-embed-text in one step.
-   - Minimal output will be shown in the terminal; see `logs/scdf_install_k8s.log` for details.
+    - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, and prompt you to select either MinIO (S3) or HDFS as your storage backend. Ollama will run both phi3 and nomic-embed-text models in one container.
+    - Minimal output will be shown in the terminal; see `logs/scdf_install_k8s.log` for details.
+
+---
+
+## Storage Backend Selection (S3 or HDFS)
+
+When you run the installer, you will be prompted:
+
+```
+Select storage backend:
+  1) S3 (MinIO)
+  2) HDFS
+Enter choice [1-2, default 1]:
+```
+
+- **S3 (MinIO)**: Deploys a MinIO S3-compatible server for object storage. Credentials and endpoints will be included in the output.
+- **HDFS**: Deploys a single-node HDFS using the mdouchement/hdfs container. Exposes NameNode and WebHDFS UI via NodePorts. No credentials are required by default.
+
+All credentials and endpoints for your selected backend will be included in `creds.txt`, terminal, and logs.
+
+---
+
+## Unified Credentials and Management URLs Output
+
+At the end of install, all important credentials and endpoints are printed in a unified format to:
+- The terminal
+- The `logs/scdf_install_k8s.log` file
+- The `creds.txt` file (which is also gitignored)
+
+This includes:
+- PostgreSQL credentials and endpoint
+- RabbitMQ credentials and endpoints
+- Storage backend (MinIO or HDFS) endpoints and credentials
+- Ollama API endpoint (with both phi3 and nomic-embed-text models)
+- SCDF Dashboard URL
+- Kubernetes namespace name
+
+Example output:
+```
+[PostgreSQL]
+Host: localhost:30432
+User: user
+Password: bitnami
+Database: scdf-db
+---
+[RabbitMQ]
+AMQP: localhost:30672
+Manager UI: localhost:31672
+User: user
+Password: bitnami
+---
+[HDFS]
+NameNode (RPC): localhost:31900 (external), hdfs-namenode.scdf.svc.cluster.local:9000 (internal)
+DataNode (default): internal only, see container docs
+WebHDFS UI: localhost:31570 (external), hdfs-namenode.scdf.svc.cluster.local:50070 (internal)
+(No credentials required by default for mdouchement/hdfs)
+---
+[Ollama]
+API (phi3 and nomic-embed-text): localhost:31434 (service: ollama)
+---
+[SCDF Dashboard]
+URL: http://localhost:30080/dashboard
+---
+[Kubernetes Namespace]
+Namespace: scdf
+---
+```
+
+---
 
 ### Interactive Test Mode
 
@@ -70,10 +139,7 @@ Each step can be run independently and as many times as needed. This is useful f
     ```sh
     ./minio_install_scdf.sh
     ```
-5. **Deploy the PDF preprocessor stream**:
-    ```sh
-    ./create_stream.sh
-    ```
+
 6. **Access the management UIs:**
     - SCDF Dashboard: [http://127.0.0.1:30080/dashboard](http://127.0.0.1:30080/dashboard)
     - RabbitMQ UI: [http://127.0.0.1:31672](http://127.0.0.1:31672) (user/bitnami)

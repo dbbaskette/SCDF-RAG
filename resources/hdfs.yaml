@@ -1,0 +1,55 @@
+# HDFS Single-Node Deployment for SCDF Alternative Backend
+# Uses mdouchement/hdfs Docker image (https://hub.docker.com/r/mdouchement/hdfs)
+# Exposes HDFS NameNode and DataNode via NodePort for testing/dev use
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: hdfs-namenode
+  namespace: scdf
+spec:
+  type: NodePort
+  selector:
+    app: hdfs
+  ports:
+    - name: namenode
+      protocol: TCP
+      port: 9000
+      targetPort: 9000
+      nodePort: 31900
+    - name: webhdfs
+      protocol: TCP
+      port: 50070
+      targetPort: 50070
+      nodePort: 31570
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hdfs-deployment
+  namespace: scdf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hdfs
+  template:
+    metadata:
+      labels:
+        app: hdfs
+    spec:
+      containers:
+        - name: hdfs
+          image: mdouchement/hdfs:latest
+          ports:
+            - containerPort: 9000  # NameNode
+            - containerPort: 50070 # WebHDFS UI
+          env:
+            - name: HDFS_NAMENODE_RPC_PORT
+              value: "9000"
+            - name: HDFS_NAMENODE_HTTP_PORT
+              value: "50070"
+            - name: HDFS_DATANODE_PORT
+              value: "9001"
+            - name: HDFS_DATANODE_HTTP_PORT
+              value: "50075"

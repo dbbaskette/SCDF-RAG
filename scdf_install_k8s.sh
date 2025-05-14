@@ -227,32 +227,76 @@ register_default_apps_docker() {
 
 # Print management URLs
 print_management_urls() {
+  # Print and save credentials to creds.txt, terminal, and logs (identical output)
+  CREDS_FILE="$(pwd)/creds.txt"
   {
+    echo "# SCDF Deployment Credentials (generated $(date))"
+    echo "---"
+    echo "[PostgreSQL]"
+    echo "Host: $EXTERNAL_HOSTNAME:$POSTGRES_NODEPORT"
+    echo "User: $POSTGRES_USER"
+    echo "Password: $POSTGRES_PASSWORD"
+    echo "Database: $POSTGRES_DB"
+    echo "---"
+    echo "[RabbitMQ]"
+    echo "AMQP: $EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_AMQP"
+    echo "Manager UI: $EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_MANAGER"
+    echo "User: $RABBITMQ_USER"
+    echo "Password: $RABBITMQ_PASSWORD"
+    echo "---"
+    if [[ "$STORAGE_BACKEND" == "hdfs" ]]; then
+      echo "[HDFS]"
+      echo "NameNode (RPC): $EXTERNAL_HOSTNAME:31900 (external), hdfs-namenode.scdf.svc.cluster.local:9000 (internal)"
+      echo "DataNode (default): internal only, see container docs"
+      echo "WebHDFS UI: $EXTERNAL_HOSTNAME:31570 (external), hdfs-namenode.scdf.svc.cluster.local:50070 (internal)"
+      echo "(No credentials required by default for mdouchement/hdfs)"
+      echo "---"
+    else
+      if kubectl get secret minio -n "$NAMESPACE" >/dev/null 2>&1; then
+        MINIO_USER=$(kubectl get secret minio -n "$NAMESPACE" -o jsonpath='{.data.root-user}' | base64 --decode 2>/dev/null || echo '')
+        MINIO_PASS=$(kubectl get secret minio -n "$NAMESPACE" -o jsonpath='{.data.root-password}' | base64 --decode 2>/dev/null || echo '')
+      else
+        MINIO_USER="<not installed>"
+        MINIO_PASS="<not installed>"
+      fi
+      echo "[MinIO S3]"
+      echo "API: $EXTERNAL_HOSTNAME:$MINIO_API_PORT"
+      echo "Console: $EXTERNAL_HOSTNAME:$MINIO_CONSOLE_PORT"
+      echo "User: $MINIO_USER"
+      echo "Password: $MINIO_PASS"
+      echo "---"
+    fi
+    echo "[Ollama]"
+    echo "API (phi3 and nomic-embed-text): $EXTERNAL_HOSTNAME:$OLLAMA_NODEPORT (service: ollama)"
+    echo "---"
+    echo "[SCDF Dashboard]"
+    echo "URL: http://$EXTERNAL_HOSTNAME:$SCDF_SERVER_PORT/dashboard"
+    echo "---"
+    echo "[Kubernetes Namespace]"
+    echo "Namespace: $NAMESPACE"
+    echo "---"
     echo "--- Management URLs and Credentials ---"
     echo "SCDF Dashboard:    http://$EXTERNAL_HOSTNAME:$SCDF_SERVER_PORT/dashboard"
-    echo "RabbitMQ MGMT UI:  http://$EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_MANAGER [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
-    echo "RabbitMQ AMQP:     $EXTERNAL_HOSTNAME:$RABBITMQ_NODEPORT_AMQP [$RABBITMQ_USER/$RABBITMQ_PASSWORD]"
-    echo "PostgreSQL:        $EXTERNAL_HOSTNAME:$POSTGRES_NODEPORT [$POSTGRES_USER/$POSTGRES_PASSWORD, DB: $POSTGRES_DB]"
-    echo "Ollama (nomic):    http://ollama-nomic.$NAMESPACE.svc.cluster.local:11434 [internal K8s]"
-    echo "Ollama (nomic, local): http://$EXTERNAL_HOSTNAME:$OLLAMA_NODEPORT [if port-forwarded]"
-    MINIO_USER=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-user}" | base64 --decode 2>/dev/null)
-    MINIO_PASS=$(kubectl get secret --namespace $NAMESPACE $MINIO_RELEASE -o jsonpath="{.data.root-password}" | base64 --decode 2>/dev/null)
-    if [[ -n "$MINIO_USER" && -n "$MINIO_PASS" ]]; then
-      echo "MinIO Credentials [Bitnami Helm chart default]:"
+    if [[ "$STORAGE_BACKEND" == "hdfs" ]]; then
+      echo "HDFS Web UI:       http://$EXTERNAL_HOSTNAME:31570"
+    else
+      echo "MinIO MGMT Console: http://$EXTERNAL_HOSTNAME:${MINIO_CONSOLE_PORT}"
       echo "  Access Key: $MINIO_USER"
       echo "  Secret Key: $MINIO_PASS"
     fi
     echo "MinIO MGMT Console: http://$EXTERNAL_HOSTNAME:${MINIO_CONSOLE_PORT}"
     echo "Namespace:         $NAMESPACE"
+    echo "---"
+    echo "Credentials have also been written to creds.txt in the project root."
+
     echo "To stop services, delete the namespace or uninstall the Helm releases."
     echo "---"
-    echo "Nomic Model Info:  Model 'nomic-embed-text' is available via the Ollama API."
-    echo "  Example embedding endpoint: POST /api/embeddings to http://ollama-nomic.$NAMESPACE.svc.cluster.local:11434"
-  } | tee -a "$LOGFILE"
+  } | tee "$CREDS_FILE" | tee -a "$LOGFILE"
 }
 
 # --- Namespace Utility ---
 ensure_namespace() {
+{{ ... }}
   if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
     step_minor "Creating namespace $NAMESPACE..."
     kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1
@@ -367,6 +411,17 @@ install_postgresql() {
   check_pgvector_extension
 }
 
+# --- Install HDFS as a standalone function ---
+install_hdfs() {
+  ensure_namespace
+  step_major "Reset HDFS Deployment (delete existing deployment/service)"
+  kubectl delete -f resources/hdfs.yaml --ignore-not-found >>"$LOGFILE" 2>&1
+  step_major "Apply HDFS YAML"
+  kubectl apply -f resources/hdfs.yaml >>"$LOGFILE" 2>&1
+  wait_for_ready hdfs-deployment 180
+  step_done "HDFS deployed and ready."
+}
+
 # --- Install MinIO as a standalone function ---
 install_minio() {
   ensure_namespace
@@ -404,6 +459,24 @@ apply_ollama_models_yaml() {
 }
 
 # (Removed: Ollama Phi is now included in the combined deployment)
+
+# --- Prompt for Storage Backend ---
+# Prompt user for S3 (MinIO) or HDFS backend at the start of install
+prompt_storage_backend() {
+  echo "Select storage backend:"
+  echo "  1) S3 (MinIO)"
+  echo "  2) HDFS"
+  read -p "Enter choice [1-2, default 1]: " STORAGE_BACKEND_CHOICE
+  case "$STORAGE_BACKEND_CHOICE" in
+    2)
+      STORAGE_BACKEND="hdfs"
+      ;;
+    *)
+      STORAGE_BACKEND="s3"
+      ;;
+  esac
+  echo "[INFO] Using storage backend: $STORAGE_BACKEND" | tee -a "$LOGFILE"
+}
 
 # --- SCDF Install ---
 install_scdf() {
@@ -490,9 +563,14 @@ if [[ "$1" == "--test" ]]; then
 fi
 
 # --- Full Install Flow ---
+prompt_storage_backend
 cleanup_previous_install
 install_postgresql
-install_minio
+if [[ "$STORAGE_BACKEND" == "hdfs" ]]; then
+  install_hdfs
+else
+  install_minio
+fi
 apply_ollama_models_yaml
 install_scdf
 download_shell_jar

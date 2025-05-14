@@ -1,0 +1,23 @@
+# SCDF Deployment Credentials (generated Wed May 14 13:24:26 EDT 2025)
+---
+[PostgreSQL]
+Host: localhost:30432
+User: user
+Password: bitnami
+Database: scdf-db
+---
+[RabbitMQ]
+AMQP: localhost:30672
+Manager UI: localhost:31672
+User: user
+Password: bitnami
+---
+[HDFS]
+NameNode (RPC): localhost:31900 (external), hdfs-namenode.scdf.svc.cluster.local:9000 (internal)
+DataNode (default): internal only, see container docs
+WebHDFS UI: localhost:31570 (external), hdfs-namenode.scdf.svc.cluster.local:50070 (internal)
+(No credentials required by default for mdouchement/hdfs)
+---
+[Ollama]
+API (phi3 and nomic-embed-text): localhost:31434 (service: ollama)
+---
