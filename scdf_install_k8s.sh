@@ -390,13 +390,20 @@ install_minio() {
   step_done "MinIO installed and ready."
 }
 
-# --- Apply Ollama Nomic YAML ---
-apply_ollama_yaml() {
-  step_major "Apply Ollama Nomic Model YAML"
-  kubectl apply -f resources/ollama-nomic.yaml >>"$LOGFILE" 2>&1
-  wait_for_ready ollama-nomic-embed-deployment 180
-  step_done "Ollama Nomic model deployed."
+# --- Deploy Ollama Multi-Model (phi3 + nomic-embed-text) ---
+# Deploys a single Ollama container with both phi3 and nomic-embed-text models available via API.
+# Uses resources/ollama.yaml for deployment and exposes service on NodePort 31434.
+apply_ollama_models_yaml() {
+  ensure_namespace
+  step_major "Reset Ollama Multi-Model Deployment (delete existing deployment/service)"
+  kubectl delete -f resources/ollama.yaml --ignore-not-found >>"$LOGFILE" 2>&1
+  step_major "Apply Ollama Multi-Model YAML (phi3 and nomic-embed-text)"
+  kubectl apply -f resources/ollama.yaml >>"$LOGFILE" 2>&1
+  wait_for_ready ollama-deployment 180
+  step_done "Ollama with phi3 and nomic-embed-text deployed in single container."
 }
+
+# (Removed: Ollama Phi is now included in the combined deployment)
 
 # --- SCDF Install ---
 install_scdf() {
@@ -430,13 +437,13 @@ show_menu() {
   echo "1) Cleanup previous install"
   echo "2) Install PostgreSQL"
   echo "3) Install MinIO"
-  echo "4) Deploy Ollama Nomic Model (apply resources/ollama-nomic.yaml)"
-  echo "5) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
-  echo "6) Download SCDF Shell JAR"
-  echo "7) Register Default Apps (Docker)"
-  echo "8) Display the Management URLs"
+  echo "4) Deploy Ollama Models (nomic + phi, single container)"
+  echo "6) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
+  echo "7) Download SCDF Shell JAR"
+  echo "8) Register Default Apps (Docker)"
+  echo "9) Display the Management URLs"
   echo "q) Exit"
-  echo -n "Select a step to run [1-8, q to quit]: "
+  echo -n "Select a step to run [1-9, q to quit]: "
 }
 
 if [[ "$1" == "--test" ]]; then
@@ -454,19 +461,18 @@ if [[ "$1" == "--test" ]]; then
         install_minio
         ;;
       4)
-        apply_ollama_yaml
+        apply_ollama_models_yaml
         ;;
       5)
-        apply_ollama_static_yaml
-        ;;
-      6)
         install_scdf
-        download_shell_jar
         ;;
       7)
-        register_default_apps_docker
+        download_shell_jar
         ;;
       8)
+        register_default_apps_docker
+        ;;
+      9)
         print_management_urls
         ;;
       q|Q)
@@ -474,7 +480,7 @@ if [[ "$1" == "--test" ]]; then
         exit 0
         ;;
       *)
-        echo "Invalid option. Please select 1-8 or q to quit."
+        echo "Invalid option. Please select 1-9 or q to quit."
         ;;
     esac
     echo
@@ -487,10 +493,10 @@ fi
 cleanup_previous_install
 install_postgresql
 install_minio
-apply_ollama_yaml
+apply_ollama_models_yaml
 install_scdf
-register_default_apps_docker
 download_shell_jar
+register_default_apps_docker
 print_management_urls
 
 exit 0

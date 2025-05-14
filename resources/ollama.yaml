@@ -1,0 +1,58 @@
+# --- Ollama Multi-Model Service (phi3 + nomic-embed-text) ---
+# This YAML deploys Ollama with both phi3 and nomic-embed-text models in a single container.
+# It exposes the Ollama API on NodePort 31434 and persists models to a local directory.
+
+# --- Service: Exposes Ollama API on the cluster and externally via NodePort ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama         # Service name, must match what your apps use
+  namespace: scdf      # Namespace for all SCDF resources
+spec:
+  type: NodePort       # Exposes service on <NodeIP>:31434
+  selector:
+    app: ollama        # Must match pod label below
+  ports:
+    - protocol: TCP
+      port: 11434         # Cluster-internal port
+      targetPort: 11434   # Pod/container port
+      nodePort: 31434     # External port (30000-32767)
+
+---
+# --- Deployment: Single Ollama pod running both models ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-deployment   # Deployment name, referenced by scripts
+  namespace: scdf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama           # Must match labels below
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama
+          command: ["/bin/sh"]
+          args:
+            - "-c"
+            - |
+              # Start Ollama API server, then pull both models before pod is ready
+              ollama serve &
+              sleep 10 && ollama pull phi3 && ollama pull nomic-embed-text && wait
+          ports:
+            - containerPort: 11434   # Ollama API port inside container
+          volumeMounts:
+            - mountPath: /root/.ollama   # Persist models here
+              name: ollama-storage
+      volumes:
+        - name: ollama-storage
+          hostPath:
+            path: /Users/dbbaskette/.ollama   # Change for different host path
+            type: DirectoryOrCreate
+# To use a PVC instead, replace hostPath with persistentVolumeClaim

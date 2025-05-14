@@ -10,9 +10,9 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 
 ## Features
 
-- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama Nomic via Helm and dynamic YAML generation.
+- **One-command install**: Deploys SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama (with both phi3 and nomic-embed-text models) via Helm and dynamic YAML generation.
 - **MinIO S3 integration**: Easily deploy a MinIO S3-compatible server for object storage in the SCDF namespace.
-- **Ollama Nomic embedding model**: Installs the Nomic embedding model for use with SCDF pipelines, exposed via NodePort for external access.
+- **Ollama Multi-Model embedding**: Installs both phi3 and nomic-embed-text models in a single Ollama container, exposed via NodePort 31434 for external access. The service is named `ollama`.
 - **Automatic cleanup**: Removes previous installations and verifies deletion before proceeding.
 - **NodePort exposure**: All management UIs and Ollama API are available on your localhost for easy access.
 - **Default app registration**: Downloads and registers the latest default RabbitMQ stream apps via the SCDF REST API.
@@ -37,7 +37,7 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
     ```sh
     ./scdf_install_k8s.sh
     ```
-   - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and the Ollama Nomic model in one step.
+   - This will install SCDF, Skipper, RabbitMQ, PostgreSQL, MinIO, and Ollama with both phi3 and nomic-embed-text in one step.
    - Minimal output will be shown in the terminal; see `logs/scdf_install_k8s.log` for details.
 
 ### Interactive Test Mode
@@ -79,7 +79,7 @@ Each step can be run independently and as many times as needed. This is useful f
     - RabbitMQ UI: [http://127.0.0.1:31672](http://127.0.0.1:31672) (user/bitnami)
     - RabbitMQ AMQP: `localhost:30672` (user/bitnami)
     - MinIO Console: [http://127.0.0.1:30901](http://127.0.0.1:30901)
-    - Ollama Nomic: [http://127.0.0.1:31434](http://127.0.0.1:31434)
+    - Ollama API: [http://127.0.0.1:31434](http://127.0.0.1:31434) (serves both phi3 and nomic-embed-text)
 7. **Check logs and troubleshoot:**
     - All actions and errors are logged in the `logs/` directory.
     - If you encounter issues, check these logs for details.
@@ -126,6 +126,30 @@ sudo chmod +x /usr/local/bin/yq
 ```
 
 If any of these tools are missing, the install script will exit with an error and prompt you to install them.
+
+---
+
+## Embedding Model and Database Schema
+
+- The embedding vector dimension in your database **must match** the output of your embedding model:
+    - `nomic-embed-text` produces 768-dimensional vectors.
+    - `phi3` produces 1536-dimensional vectors.
+- To change the dimension, update the `embedding vector(N)` line in `resources/embed.sql` to match your chosen model.
+- To change the embedding model, edit the pull commands in `resources/ollama.yaml` and update the model name in your pipeline configuration.
+
+### Example: Changing the Embedding Model
+- To use only `phi3`, edit `resources/ollama.yaml` and remove the nomic-embed-text pull.
+- To use a different model, add its pull command and adjust your application config accordingly.
+
+### Example: Changing Database Schema
+- Edit `resources/embed.sql`:
+  ```sql
+  CREATE TABLE items (
+      id SERIAL PRIMARY KEY,
+      content TEXT,
+      embedding vector(768) -- or 1536 for phi3
+  );
+  ```
 
 ---
 
