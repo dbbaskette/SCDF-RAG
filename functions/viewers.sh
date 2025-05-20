@@ -45,7 +45,7 @@ view_processor_apps() {
 # View default S3 source and log sink app registration and options
 view_default_apps() {
   source_properties
-  set_minio_creds
+  # set_minio_creds removed; MinIO credentials should only be set by default_s3_stream
   echo "[VIEW] Default apps S3 source, log sink registration and status:"
   echo "Defined default app variables:"
   echo "  S3_APP_URI=${S3_APP_URI:-unset}"

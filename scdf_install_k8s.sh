@@ -1,4 +1,11 @@
 #!/bin/bash
+
+# Check for Kubernetes connectivity before any actions
+if ! kubectl version --request-timeout=5s >/dev/null 2>&1; then
+  echo "ERROR: Unable to connect to Kubernetes cluster with kubectl. Is your cluster running and kubeconfig set?"
+  exit 1
+fi
+
 #
 # scdf_install_k8s.sh — Spring Cloud Data Flow Full Installer for Kubernetes
 #
@@ -246,10 +253,10 @@ print_management_urls() {
     echo "---"
     if [[ "$STORAGE_BACKEND" == "hdfs" ]]; then
       echo "[HDFS]"
-      echo "NameNode (RPC): $EXTERNAL_HOSTNAME:31900 (external), hdfs-namenode.scdf.svc.cluster.local:9000 (internal)"
-      echo "DataNode (default): internal only, see container docs"
-      echo "WebHDFS UI: $EXTERNAL_HOSTNAME:31570 (external), hdfs-namenode.scdf.svc.cluster.local:50070 (internal)"
-      echo "(No credentials required by default for mdouchement/hdfs)"
+      echo "NameNode (RPC API): $EXTERNAL_HOSTNAME:30800 (external), hdfs.scdf.svc.cluster.local:9000 (internal)"
+      echo "WebHDFS UI:        http://$EXTERNAL_HOSTNAME:30870 (external), http://hdfs.scdf.svc.cluster.local:9870 (internal)"
+      echo "DataNode:          internal only, see container docs"
+      echo "(No credentials required by default for sequenceiq/hadoop-docker)"
       echo "---"
     else
       if kubectl get secret minio -n "$NAMESPACE" >/dev/null 2>&1; then
@@ -296,7 +303,6 @@ print_management_urls() {
 
 # --- Namespace Utility ---
 ensure_namespace() {
-{{ ... }}
   if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
     step_minor "Creating namespace $NAMESPACE..."
     kubectl create namespace "$NAMESPACE" >>"$LOGFILE" 2>&1
@@ -418,9 +424,10 @@ install_hdfs() {
   kubectl delete -f resources/hdfs.yaml --ignore-not-found >>"$LOGFILE" 2>&1
   step_major "Apply HDFS YAML"
   kubectl apply -f resources/hdfs.yaml >>"$LOGFILE" 2>&1
-  wait_for_ready hdfs-deployment 180
+  wait_for_ready hdfs 180
   step_done "HDFS deployed and ready."
 }
+
 
 # --- Install MinIO as a standalone function ---
 install_minio() {
@@ -511,6 +518,7 @@ show_menu() {
   echo "2) Install PostgreSQL"
   echo "3) Install MinIO"
   echo "4) Deploy Ollama Models (nomic + phi, single container)"
+  echo "5) Install HDFS (delete/recreate scdf namespace)"
   echo "6) Install Spring Cloud Data Flow (includes Skipper, chart-managed RabbitMQ)"
   echo "7) Download SCDF Shell JAR"
   echo "8) Register Default Apps (Docker)"
@@ -537,6 +545,11 @@ if [[ "$1" == "--test" ]]; then
         apply_ollama_models_yaml
         ;;
       5)
+        # Install HDFS: ensure namespace exists, then install_hdfs
+        ensure_namespace
+        install_hdfs
+        ;;
+      6)
         install_scdf
         ;;
       7)
@@ -565,7 +578,6 @@ fi
 # --- Full Install Flow ---
 prompt_storage_backend
 cleanup_previous_install
-install_postgresql
 if [[ "$STORAGE_BACKEND" == "hdfs" ]]; then
   install_hdfs
 else

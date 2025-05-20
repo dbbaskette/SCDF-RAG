@@ -15,10 +15,10 @@ source_properties
 : "${S3_REGION:?S3_REGION not set}"
 : "${S3_FILE_TRANSFER_MODE:?S3_FILE_TRANSFER_MODE not set}"
 
-# test_new_embedproc_pipeline.sh - Test stream: s3 | textProc | embedProc | log
-# Usage: test_new_embedproc_pipeline
+# test_new_embedproc_stream.sh - Test stream: s3 | textProc | embedProc | log
+# Usage: test_new_embedproc_stream
 
-test_new_embedproc_pipeline() {
+test_new_embedproc_stream() {
   echo "[TEST-EMBEDPROC] Creating test stream: s3 | textProc | embedProc | log"
   local TEST_STREAM_NAME="test-embedproc-pipeline"
   # Destroy any existing test stream and definitions to ensure a clean slate
@@ -120,11 +120,6 @@ test_new_embedproc_pipeline() {
   DEPLOY_PROPS+=",app.embedProc.logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE"
   DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.jdbc.core=DEBUG"
   DEPLOY_PROPS+=",app.embedProc.logging.level.org.springframework.jdbc.datasource=DEBUG"
-  # DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream.binder.rabbit=INFO"
-  # DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration.handler.LoggingHandler=DEBUG"
-  # DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.messaging=DEBUG"
-  # DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.integration=DEBUG"
-  # DEPLOY_PROPS+=",app.pgcopy.logging.level.org.springframework.cloud.stream=DEBUG"
   DEPLOY_PROPS+=",app.embedProc.spring.ai.vectorstore.pgvector.enabled=true"
 
   DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=embedproc-to-log"

@@ -1,55 +1,68 @@
-# HDFS Single-Node Deployment for SCDF Alternative Backend
-# Uses mdouchement/hdfs Docker image (https://hub.docker.com/r/mdouchement/hdfs)
-# Exposes HDFS NameNode and DataNode via NodePort for testing/dev use
-
 apiVersion: v1
-kind: Service
+kind: Namespace
 metadata:
-  name: hdfs-namenode
-  namespace: scdf
-spec:
-  type: NodePort
-  selector:
-    app: hdfs
-  ports:
-    - name: namenode
-      protocol: TCP
-      port: 9000
-      targetPort: 9000
-      nodePort: 31900
-    - name: webhdfs
-      protocol: TCP
-      port: 50070
-      targetPort: 50070
-      nodePort: 31570
+  name: scdf
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hdfs-deployment
+  name: hadoop-single-node
   namespace: scdf
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: hdfs
+      app: hadoop-hdfs
   template:
     metadata:
       labels:
-        app: hdfs
+        app: hadoop-hdfs
     spec:
+      hostname: localhost
       containers:
-        - name: hdfs
-          image: mdouchement/hdfs:latest
+        - name: hadoop
+          #image: dbbaskette/hadoop-gemini:latest
+          image: dbbaskette/hadoop-single-node:latest
+          imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 9000  # NameNode
-            - containerPort: 50070 # WebHDFS UI
-          env:
-            - name: HDFS_NAMENODE_RPC_PORT
-              value: "9000"
-            - name: HDFS_NAMENODE_HTTP_PORT
-              value: "50070"
-            - name: HDFS_DATANODE_PORT
-              value: "9001"
-            - name: HDFS_DATANODE_HTTP_PORT
-              value: "50075"
+            - containerPort: 9000 # NameNode RPC
+              name: nn-rpc
+            - containerPort: 9870 # NameNode Web UI
+              name: nn-webui
+            - containerPort: 30866 # DataNode Data Transfer (default internal port)
+              name: dn-data
+            - containerPort: 30867 # DataNode IPC (default internal port)
+              name: dn-ipc
+            - containerPort: 30864 # DataNode Web UI (default internal port)
+              name: dn-webui
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hadoop-hdfs-service
+  namespace: scdf
+spec:
+  type: NodePort
+  selector:
+    app: hadoop-hdfs
+  ports:
+    - name: namenode-rpc
+      protocol: TCP
+      port: 9000       # Internal port for NameNode RPC
+      targetPort: 9000 # Container port for NameNode RPC
+      nodePort: 30800  # Fixed NodePort for external access
+    - name: namenode-webui
+      protocol: TCP
+      port: 9870       # Internal port for NameNode Web UI
+      targetPort: 9870 # Container port for NameNode Web UI
+      nodePort: 30870  # Fixed NodePort for external access
+    - name: datanode-data
+      protocol: TCP
+      port: 30866       # Internal port for DataNode data transfer (matches DN default)
+      targetPort: 30866 # Container port for DataNode data transfer (DN listens on this now)
+      nodePort: 30866  # Fixed NodePort for external access
+    - name: datanode-webui
+      protocol: TCP
+      port: 30864       # Internal port for DataNode Web UI (matches DN default)
+      targetPort: 30864 # Container port for DataNode Web UI (DN listens on this now)
+      nodePort: 30864  # Fixed NodePort for external access

@@ -1,8 +1,8 @@
 #!/bin/bash
-# test_textproc_pipeline.sh - Test stream: s3 | textProc | embedProc | pgcopy
-# Usage: test_textproc_pipeline
+# test_textproc_stream.sh - Test stream: s3 | textProc | embedProc | pgcopy
+# Usage: test_textproc_stream
 
-test_textproc_pipeline() {
+test_textproc_stream() {
   source_properties
   set_minio_creds
   echo "[DEBUG] S3_ACCESS_KEY: $S3_ACCESS_KEY"

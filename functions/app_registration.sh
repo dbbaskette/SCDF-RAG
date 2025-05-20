@@ -54,8 +54,7 @@ step_unregister_processor_apps() {
 step_register_default_apps() {
   source_properties
   echo "[STEP] Register default apps (source:s3, sink:log) using Maven URIs"
-  set_minio_creds
-  echo "MinIO credentials fetched."
+  # set_minio_creds removed; should only be called by default_s3_stream
   # Validate required S3 variables
   local missing=0
   for var in S3_APP_URI S3_ENDPOINT S3_ACCESS_KEY S3_SECRET_KEY S3_BUCKET S3_REGION; do
