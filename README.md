@@ -34,6 +34,15 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
     ```sh
     chmod +x scdf_install_k8s.sh minio_install_scdf.sh create_stream.sh
     ```
+
+3. **Stream Management**:
+    ```sh
+    # Create a stream
+    ./create_stream.sh --stream=hdfs  # or --stream=s3
+    
+    # Destroy all streams
+    ./create_stream.sh --destroy-all
+    ```
 3. **Run the SCDF installer**:
     ```sh
     ./scdf_install_k8s.sh
