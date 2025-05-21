@@ -52,14 +52,14 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 
 ---
 
-## Storage Backend Selection (S3 or HDFS)
+## RAG Document Storage Selection (S3 or HDFS)
 
-When you run the installer, you will be prompted:
+When you run the installer, you'll choose where to store the documents that will be processed by the RAG pipeline:
 
 ```
-Select storage backend:
-  1) S3 (MinIO)
-  2) HDFS
+Select document storage backend:
+  1) S3 (MinIO) - Recommended for most use cases
+  2) HDFS - For HDFS-compatible storage
 Enter choice [1-2, default 1]:
 ```
 
