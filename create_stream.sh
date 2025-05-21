@@ -31,6 +31,11 @@ echo "[INFO] Sourcing test HDFS app functions..."
 source "$(dirname "$0")/functions/test_hdfs_app.sh"
 echo "[INFO] Test HDFS app functions loaded."
 
+# Source test HDFS textproc app functions
+echo "[INFO] Sourcing test HDFS textproc app functions..."
+source "$(dirname "$0")/functions/test_hdfs_textproc_app.sh"
+echo "[INFO] Test HDFS textproc app functions loaded."
+
 # Source default S3 stream functions
 echo "[INFO] Sourcing S3 stream functions..."
 source "$(dirname "$0")/functions/default_s3_stream.sh"
@@ -195,6 +200,16 @@ if [[ "$1" == "--test" ]]; then
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s3 - Create and deploy test HDFS app ==========" | tee -a "$LOG_FILE"
         test_hdfs_app
+        ;;
+      s4)
+        LOG_DIR="$(dirname "$0")/logs"
+        LOG_FILE="$LOG_DIR/create-stream.log"
+        mkdir -p "$LOG_DIR"
+        touch "$LOG_FILE"
+        chmod 666 "$LOG_FILE" 2>/dev/null || true
+        exec > >(tee -a "$LOG_FILE") 2>&1
+        echo "========== [$(date)] Option: s4 - Test HDFS and textProc ==========" | tee -a "$LOG_FILE"
+        test_hdfs_textproc_app
         ;;
       1)
         LOG_DIR="$(dirname "$0")/logs"
