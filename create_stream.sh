@@ -1,20 +1,26 @@
 #!/bin/bash
 
-
-
-# Set SCDF_API_URL from environment or use default
-SCDF_API_URL=${SCDF_SERVER_URL:-http://localhost:30080}
-
-# Check SCDF management endpoint before sourcing anything else
-if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-  echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-  exit 1
+# Process command line arguments
+TEST_MODE=0
+if [[ "$1" == "--test" ]]; then
+    TEST_MODE=1
+    echo "[INFO] Running in test mode - skipping SCDF server checks"
+    # Shift the --test argument so it doesn't interfere with other argument processing
+    shift
 fi
 
-# Source environment setup and credentials functions
-echo "[INFO] Sourcing environment setup..."
+# Source environment setup and properties
 source "$(dirname "$0")/functions/env_setup.sh"
+source_properties
+
 echo "[INFO] Environment setup complete."
+
+# Only check SCDF server if not in test mode
+if [[ $TEST_MODE -eq 0 ]]; then
+    if ! check_scdf_server; then
+        exit 1
+    fi
+fi
 
 # Source app registration functions
 echo "[INFO] Sourcing app registration functions..."
@@ -166,7 +172,7 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "$1" == "--test" ]]; then
+if [[ $TEST_MODE -eq 1 ]]; then
   while true; do
     show_menu
     read -r choice
@@ -179,7 +185,7 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s1 - Create and deploy default HDFS stream ==========" | tee -a "$LOG_FILE"
-        default_hdfs_stream
+        TEST_MODE=1 default_hdfs_stream
         ;;
       s2)
         LOG_DIR="$(dirname "$0")/logs"
@@ -189,7 +195,7 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s2 - Create and deploy default S3 stream ==========" | tee -a "$LOG_FILE"
-        default_s3_stream
+        TEST_MODE=1 default_s3_stream
         ;;
       s3)
         LOG_DIR="$(dirname "$0")/logs"
@@ -199,7 +205,7 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s3 - Create and deploy test HDFS app ==========" | tee -a "$LOG_FILE"
-        test_hdfs_app
+        TEST_MODE=1 test_hdfs_app
         ;;
       s4)
         LOG_DIR="$(dirname "$0")/logs"
@@ -209,110 +215,19 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s4 - Test HDFS and textProc ==========" | tee -a "$LOG_FILE"
-        test_hdfs_textproc_app
-        ;;
-      1)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 1 - Destroy stream ==========" | tee -a "$LOG_FILE"
-        step_destroy_stream
-        ;;
-      2)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 2 - Unregister processor apps ==========" | tee -a "$LOG_FILE"
-        step_unregister_processor_apps
-        ;;
-      3)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 3 - Register processor apps ==========" | tee -a "$LOG_FILE"
-        step_register_processor_apps
-        ;;
-      4)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 4 - Register default apps ==========" | tee -a "$LOG_FILE"
-        step_register_default_apps
-        ;;
-      5)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 5 - Create stream definition ==========" | tee -a "$LOG_FILE"
-        step_create_stream_definition
-        ;;
-      6)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 6 - Deploy stream ==========" | tee -a "$LOG_FILE"
-        step_deploy_stream
-        ;;
-      7)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 7 - View stream ==========" | tee -a "$LOG_FILE"
-        view_stream
-        ;;
-      8)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 8 - View processor apps ==========" | tee -a "$LOG_FILE"
-        view_processor_apps
-        ;;
-      9)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 9 - View default apps ==========" | tee -a "$LOG_FILE"
-        view_default_apps
+        TEST_MODE=1 test_hdfs_textproc_app
         ;;
       q|Q)
-        echo "Exiting."
+        echo "Exiting..."
         exit 0
         ;;
       *)
-        echo "Invalid option. Please select 1-9, s1, s2 or q to quit."
+        echo "Invalid option. Please try again."
         ;;
     esac
     echo
     echo "--- Step complete. Return to menu. ---"
   done
-  exit 0
 fi
 
 case "$1" in
