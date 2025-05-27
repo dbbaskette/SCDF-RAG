@@ -7,7 +7,7 @@ show_menu() {
   echo "-----------------------------------"
   echo "s1) Create and deploy default HDFS stream"
   echo "s2) Create and deploy default S3 stream"
-  echo "s3) Create and deploy test HDFS app"
+  echo "s3) Run test_hdfs_app (includes CF auth)" # Updated description
   echo "s4) Create and deploy test HDFS and textProc"
   echo "1) Destroy stream"
   echo "2) Unregister processor apps"

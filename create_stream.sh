@@ -20,6 +20,11 @@ if [[ $TEST_MODE -eq 0 ]]; then
     if ! check_scdf_server; then
         exit 1
     fi
+    # Second SCDF server check, also conditional on not being in test mode
+    if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
+      echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
+      exit 1
+    fi
 fi
 
 # Source app registration functions
@@ -80,7 +85,7 @@ echo "[INFO] Menu functions loaded."
 #   ./create_stream.sh --stream=test-embedproc   # Deploys a test stream for embedding processor verification
 #   ./create_stream.sh --test    # Interactive menu for step-by-step stream management
 #
-# If no arguments are passed, this script will print usage and exit.
+# If no arguments are passed (and not in test mode), this script will print usage and exit.
 # You must specify --stream=streamname (or --test for interactive mode).
 
 #
@@ -154,18 +159,8 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 
-# Source properties at script start for initial setup
-echo "[INFO] Loading properties..."
-source_properties
-echo "[INFO] Properties loaded."
-
-# Check SCDF management endpoint before any actions
-if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-  echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-  exit 1
-fi
-
-if [[ $# -eq 0 ]]; then
+# Argument check for non-test mode
+if [[ $# -eq 0 && $TEST_MODE -eq 0 ]]; then
   echo "Usage: $0 --stream=STREAMNAME"
   echo "  STREAMNAME: hdfs | s3"
   echo "  Or use --test for interactive menu."
@@ -204,8 +199,8 @@ if [[ $TEST_MODE -eq 1 ]]; then
         touch "$LOG_FILE"
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: s3 - Create and deploy test HDFS app ==========" | tee -a "$LOG_FILE"
-        TEST_MODE=1 test_hdfs_app
+        echo "========== [$(date)] Option: s3 - Running test_hdfs_app (includes CF auth) ==========" | tee -a "$LOG_FILE"
+        TEST_MODE=0 test_hdfs_app # Changed TEST_MODE to 0 for this call
         ;;
       s4)
         LOG_DIR="$(dirname "$0")/logs"
@@ -230,19 +225,21 @@ if [[ $TEST_MODE -eq 1 ]]; then
   done
 fi
 
-case "$1" in
-  --stream=hdfs)
-    default_hdfs_stream
-    ;;
-  --stream=s3)
-    default_s3_stream
-    ;;
-  *)
-    echo "ERROR: Unknown stream: $1"
-    echo "Usage: $0 --stream=STREAMNAME"
-    echo "  STREAMNAME: hdfs | s3"
-    echo "  Or use --test for interactive menu."
-    exit 1
-    ;;
-esac
-
+# Non-test mode stream deployment logic
+if [[ $TEST_MODE -eq 0 ]]; then
+    case "$1" in
+      --stream=hdfs)
+        default_hdfs_stream
+        ;;
+      --stream=s3)
+        default_s3_stream
+        ;;
+      *)
+        echo "ERROR: Unknown stream: $1"
+        echo "Usage: $0 --stream=STREAMNAME"
+        echo "  STREAMNAME: hdfs | s3"
+        echo "  Or use --test for interactive menu."
+        exit 1
+        ;;
+    esac
+fi

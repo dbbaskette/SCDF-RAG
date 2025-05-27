@@ -24,3 +24,4 @@ instructions.txt
 resources/scdf-values.yaml
 # Add any other auto-generated files here
 creds.txt
+.cf_token
