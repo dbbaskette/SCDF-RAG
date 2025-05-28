@@ -274,13 +274,14 @@ test_hdfs_app() {
     "app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # 10 seconds
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${test_stream_name}"
+    #"app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
+    "app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.BP_JVM_VERSION=17"
     # "app.hdfsWatcher.spring.cloud.function.definition=hdfsSupplier" # Explicitly set if needed
     "app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfs.source.HdfsSourceProperties=DEBUG" # Example logging
     "app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.log.spring.cloud.stream.bindings.input.group=${test_stream_name}"
     "app.log.logging.level.root=INFO" # Example logging for the log sink
-    # Set JBP_CONFIG_OPEN_JDK_JRE for Java 17. Try with 'deployer.' prefix.
-    "deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
+
   )
   # Optional: Add webhdfsUri if it's set
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
@@ -290,6 +291,7 @@ test_hdfs_app() {
   local deployment_properties_str
   IFS=',' deployment_properties_str="${deploy_props_list[*]}"
 
+  echo "ACTUAL DEPLOYMENT PROPERTIES: $deployment_properties_str"
 
   if ! deploy_stream_api "$test_stream_name" "$deployment_properties_str" "$token" "$SCDF_CF_URL"; then
       echo "Failed to deploy stream '$test_stream_name'. Exiting." >&2
