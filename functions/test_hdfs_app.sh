@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_hdfs_app.sh - Test HDFS app with Cloud Foundry authentication
+# test_hdfs_app.sh - Test HDFS app with Cloud Foundry authentication and app registration
 # Usage: test_hdfs_app
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,16 +49,16 @@ check_token_validity() {
 
   if [ "$http_code" == "200" ]; then
     echo "[DEBUG check_token_validity] Token validation successful (HTTP 200 from $validation_url)."
-    if echo "$validation_output" | grep -q '"version"'; then # Check for "version" for informational purposes
+    if echo "$validation_output" | grep -q '"version"'; then 
         echo "[DEBUG check_token_validity] FYI: String '\"version\"' found in $validation_url output."
     else
         echo "[DEBUG check_token_validity] FYI: String '\"version\"' NOT found in $validation_url output."
     fi
-    return 0 # Success
+    return 0 
   else
     echo "[DEBUG check_token_validity] Condition 4 FAIL: Token validation failed for $validation_url."
     echo "[DEBUG check_token_validity] HTTP code was: $http_code. Expected 200."
-    return 1 # Failure
+    return 1 
   fi
 }
 
@@ -134,6 +134,117 @@ get_oauth_token() {
   return 0
 }
 
+# Function to check if an app is already registered (specific to this script)
+is_app_registered_in_test_script() {
+  local app_type="$1"
+  local app_name="$2" # Expects "hdfsWatcher"
+  local current_token="$3"
+  local scdf_endpoint="$4"
+
+  echo "[DEBUG is_app_registered_in_test_script] Checking if $app_type app '$app_name' is registered at $scdf_endpoint."
+  local response_code
+  response_code=$(curl -s -k -w "%{http_code}" -H "Authorization: Bearer $current_token" \
+    "${scdf_endpoint}/apps/${app_type}/${app_name}" -o /dev/null)
+
+  if [ "$response_code" == "200" ]; then
+    echo "[DEBUG is_app_registered_in_test_script] App '$app_name' of type '$app_type' is already registered (HTTP 200)."
+    return 0 # True, app is registered
+  elif [ "$response_code" == "404" ]; then
+    echo "[DEBUG is_app_registered_in_test_script] App '$app_name' of type '$app_type' is NOT registered (HTTP 404)."
+    return 1 # False, app is not registered
+  else
+    echo "[DEBUG is_app_registered_in_test_script] Error checking app '$app_name': HTTP $response_code. Assuming not registered or error."
+    return 1 # Error or other non-200, treat as not registered for safety
+  fi
+}
+
+# Function to register the hdfsWatcher app
+register_hdfs_watcher_app() {
+  local current_token="$1" 
+  local scdf_endpoint="$2" 
+
+  local app_type="source"
+  local app_name="hdfsWatcher" # Corrected to hdfsWatcher (camelCase)
+  local app_uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"
+  local force_registration="true" 
+
+  echo "--- ${app_name} App Registration ---" # Updated echo
+
+  # Check if the app is already registered
+  if is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; then
+    echo "[INFO] $app_type app '$app_name' is already registered. Deleting it first..."
+    local delete_response_code
+    delete_response_code=$(curl -s -k -w "%{http_code}" -X DELETE \
+      -H "Authorization: Bearer $current_token" \
+      "${scdf_endpoint}/apps/${app_type}/${app_name}" -o /dev/null)
+
+    if [ "$delete_response_code" == "200" ]; then
+      echo "[INFO] Successfully sent DELETE request for $app_type app '$app_name' (HTTP $delete_response_code)."
+      echo -n "[INFO] Waiting for app '$app_name' to be unregistered..."
+      local wait_time=0
+      local max_wait_time=30 # seconds
+      while is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; do
+        if [ "$wait_time" -ge "$max_wait_time" ]; then
+          echo ""
+          echo "[WARN] Timed out waiting for app '$app_name' to be unregistered. Proceeding with registration attempt anyway."
+          break
+        fi
+        echo -n "."
+        sleep 2
+        wait_time=$((wait_time + 2))
+      done
+      if [ "$wait_time" -lt "$max_wait_time" ]; then
+         echo " Unregistered."
+      fi
+    else
+      echo "[WARN] Failed to delete $app_type app '$app_name' (HTTP $delete_response_code). Will attempt registration anyway."
+    fi
+  else
+    echo "[INFO] $app_type app '$app_name' is not currently registered. Proceeding with new registration."
+  fi
+
+
+  echo "Registering $app_type app '$app_name' from URI: $app_uri"
+  local data="uri=${app_uri}&force=${force_registration}"
+  
+  local response_body_file
+  response_body_file=$(mktemp)
+  local response_code
+  response_code=$(curl -s -k -w "%{http_code}" -X POST \
+    -H "Authorization: Bearer $current_token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "$data" \
+    "${scdf_endpoint}/apps/${app_type}/${app_name}" -o "$response_body_file") # Using app_name "hdfsWatcher"
+  
+  local response_body
+  response_body=$(cat "$response_body_file")
+  rm -f "$response_body_file"
+
+  if [ "$response_code" == "201" ] || [ "$response_code" == "200" ]; then # 200 can also mean success for updates
+    echo "Successfully registered $app_type app '$app_name' (HTTP $response_code)."
+    echo -n "[INFO] Verifying app '$app_name' registration status..."
+    local verify_wait_time=0
+    local max_verify_wait_time=30 # seconds
+    while ! is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; do
+        if [ "$verify_wait_time" -ge "$max_verify_wait_time" ]; then
+            echo ""
+            echo "[WARN] Timed out waiting for app '$app_name' to become queryable after registration."
+            # Even if timed out, the initial registration might have been okay.
+            return 0 # Consider it a success if the POST was 201/200
+        fi
+        echo -n "."
+        sleep 2
+        verify_wait_time=$((verify_wait_time + 2))
+    done
+    echo " Verified."
+    return 0
+  else
+    echo "Error registering $app_type app '$app_name': HTTP $response_code."
+    echo "Response body: $response_body"
+    return 1
+  fi
+}
+
 # Main function
 test_hdfs_app() {
   if [[ "${TEST_MODE:-0}" -eq 1 ]]; then
@@ -157,22 +268,25 @@ test_hdfs_app() {
 
   local final_validation_url="$SCDF_CF_URL/about"
   echo "Validating token post-authentication by checking SCDF CF endpoint: $final_validation_url"
+  local validation_response_code_post_auth 
+  local post_auth_output_file=$(mktemp)
+  validation_response_code_post_auth=$(curl -s -k -w "%{http_code}" -H "Authorization: Bearer $token" "$final_validation_url" -o "$post_auth_output_file")
+  rm -f "$post_auth_output_file"
   
-  local validation_response_code
-  local final_validation_output_file=$(mktemp)
-  validation_response_code=$(curl -s -k -w "%{http_code}" -H "Authorization: Bearer $token" "$final_validation_url" -o "$final_validation_output_file")
-  # local final_validation_output=$(cat "$final_validation_output_file") # Uncomment if you need to inspect output
-  rm -f "$final_validation_output_file"
-  
-  if [ "$validation_response_code" == "200" ]; then
-    echo "Token is confirmed valid post-authentication. Successfully connected to SCDF CF endpoint (HTTP $validation_response_code to $final_validation_url)."
+  if [ "$validation_response_code_post_auth" == "200" ]; then
+    echo "Token is confirmed valid post-authentication. Successfully connected to SCDF CF endpoint (HTTP $validation_response_code_post_auth to $final_validation_url)."
   else
-    echo "Post-authentication check: Failed to validate token or connect to SCDF CF endpoint (HTTP $validation_response_code to $final_validation_url)."
-    echo "This might indicate the token became invalid immediately after being fetched, or an issue with the endpoint."
+    echo "Post-authentication check: Failed to validate token or connect to SCDF CF endpoint (HTTP $validation_response_code_post_auth to $final_validation_url)."
     return 1
   fi
 
-  echo "Authentication flow complete. Ready to proceed with HDFS app testing (actual HDFS test logic not yet implemented here)."
+  if ! register_hdfs_watcher_app "$token" "$SCDF_CF_URL"; then # Corrected: was register_hdfs_watcher_app
+    echo "Failed to register hdfsWatcher app. Please check logs." # Corrected: was hdfsWatcher
+    return 1 
+  fi
+  echo "hdfsWatcher app registration step completed." # Corrected: was hdfsWatcher
+
+  echo "Authentication and app registration flow complete. Ready to proceed with HDFS app testing (actual HDFS test logic not yet implemented here)."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

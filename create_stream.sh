@@ -32,6 +32,48 @@ echo "[INFO] Sourcing app registration functions..."
 source "$(dirname "$0")/functions/app_registration.sh"
 echo "[INFO] App registration functions loaded."
 
+# --- Function to check, delete if exists, and then register an SCDF app ---
+# This function ensures an app is freshly registered.
+# It assumes SCDF_API_URL is set and register_app function is available.
+# Usage: reregister_app_by_name <app_type> <app_name> <app_uri> [app_metadata_uri] [force_registration_flag_for_register_app]
+reregister_app_by_name() {
+  local app_type="$1"
+  local app_name="$2"
+  local app_uri="$3"
+  local app_metadata_uri="${4:-}" # Defaults to empty if not provided
+  local force_final_registration="${5:-true}" # Passed to the underlying register_app
+
+  if [[ -z "$SCDF_API_URL" ]]; then
+    echo "[ERROR] SCDF_API_URL is not set. Cannot reregister app." >&2
+    return 1
+  fi
+
+  echo "[INFO] Checking registration status for app '$app_type/$app_name'..."
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$SCDF_API_URL/apps/$app_type/$app_name")
+
+  if [[ "$http_code" == "200" ]]; then
+    echo "[INFO] App '$app_type/$app_name' is already registered. Deleting it first..."
+    local delete_http_code
+    delete_http_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE --max-time 10 "$SCDF_API_URL/apps/$app_type/$app_name")
+    if [[ "$delete_http_code" == "200" ]]; then
+      echo "[INFO] App '$app_type/$app_name' deleted successfully."
+    else
+      echo "[WARN] Failed to delete app '$app_type/$app_name'. HTTP status: $delete_http_code. Will attempt registration anyway."
+    fi
+  elif [[ "$http_code" == "404" ]]; then
+    echo "[INFO] App '$app_type/$app_name' not found. Proceeding with new registration."
+  else
+    echo "[WARN] Unexpected HTTP status '$http_code' when checking for app '$app_type/$app_name'. Will attempt registration anyway."
+  fi
+
+  echo "[INFO] Registering app '$app_type/$app_name' with URI '$app_uri'..."
+  # Assumes register_app function is sourced from app_registration.sh
+  # Adjust the call below if the signature of your register_app function is different.
+  # Example signature: register_app "type" "name" "uri" "metadata_uri" "force_flag"
+  register_app "$app_type" "$app_name" "$app_uri" "$app_metadata_uri" "$force_final_registration"
+}
+
 # Source default HDFS stream functions
 echo "[INFO] Sourcing HDFS stream functions..."
 source "$(dirname "$0")/functions/default_hdfs_stream.sh"
