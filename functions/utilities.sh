@@ -2,56 +2,75 @@
 # utilities.sh - Utility/helper functions for SCDF automation scripts
 
 # Converts a comma-separated properties string into a JSON object string.
-# Handles special cases for Kubernetes environment variables.
 build_json_from_props() {
-  # Input string should already be cleaned of \n and \r by the caller
   local props_str="$1"
-  local json_pairs_array=() # Store "key":"value" pairs
+  local json_output=""
+  local first_pair=true
 
-  # The input props_str from test_hdfs_app.sh might start with a comma.
-  # Remove the leading comma if it exists.
-  if [[ "$props_str" == ,* ]]; then
-    props_str="${props_str#*,}"
-  fi
+  # Clean the input string: 
+  # 1. Remove leading/trailing whitespace and any leading/trailing commas.
+  # 2. Normalize space around internal commas (e.g., "key1=val1 , key2=val2" -> "key1=val1,key2=val2").
+  props_str=$(echo -n "$props_str" | \
+              sed -e 's/^[[:space:]]*,*[[:space:]]*//' \
+                  -e 's/[[:space:]]*,*[[:space:]]*$//' \
+                  -e 's/[[:space:]]*,[[:space:]]*/,/g')
 
-  # Use a more robust IFS for splitting, handling potential whitespace around commas
-  local OLD_IFS="$IFS"
-  IFS=',' read -ra PAIRS <<< "$props_str"
-  IFS="$OLD_IFS"
+  # Save and change IFS to split by comma
+  local old_ifs="$IFS"
+  IFS=','
+  # word splitting is desired here
+  # shellcheck disable=SC2206
+  local pairs_array=($props_str) # Split by comma
+  IFS="$old_ifs" # Restore IFS
 
-  for pair in "${PAIRS[@]}"; do
-    if [[ -z "$pair" ]]; then
+  for pair in "${pairs_array[@]}"; do
+    # Split pair by the first '='
+    local key="${pair%%=*}"
+    local value="${pair#*=}"
+
+    # If no '=' was in 'pair', then key=pair and value=pair.
+    # If 'key' is identical to 'value' here, it means no '=' was found,
+    # or the value was empty (key=).
+    if [[ "$key" == "$value" ]]; then
+      if [[ "$pair" == *"="* ]]; then # Case: key= (empty value)
+        value=""
+      else # Case: no equals sign at all, treat as key with empty string value
+           # or skip. For JSON, an empty string value is valid.
+        value="" 
+      fi
+    fi
+    
+    # Trim ALL leading/trailing whitespace (spaces, tabs, newlines, CRs) from key and value
+    # Using POSIX-compliant sed for trimming
+    key=$(echo -n "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    value=$(echo -n "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    # Skip if key is empty after trimming
+    if [[ -z "$key" ]]; then
       continue
     fi
 
-    key="${pair%%=*}"
-    val="${pair#*=}"
+    # JSON escape the key (primarily for " and \)
+    local escaped_key="${key//\\/\\\\}" # \ -> \\
+    escaped_key="${escaped_key//\"/\\\"}" # " -> \"
+    # Newlines/CRs in keys are highly unlikely after trimming, but if any persisted:
+    escaped_key="${escaped_key//$'\n'/\\n}" 
+    escaped_key="${escaped_key//$'\r'/\\r}"
 
-    # Keys and values should be clean of \n and \r at this point.
-    # Trim only leading/trailing spaces and tabs using sed.
-    key="$(echo -n "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    val="$(echo -n "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    # JSON escape the value (primarily for ", \, newlines, CRs)
+    local escaped_value="${value//\\/\\\\}" # \ -> \\
+    escaped_value="${escaped_value//\"/\\\"}" # " -> \"
+    escaped_value="${escaped_value//$'\n'/\\n}" # literal newline -> \n string
+    escaped_value="${escaped_value//$'\r'/\\r}" # literal CR -> \r string
 
-
-
-    # Only add if key is not empty
-    if [[ -n "$key" ]]; then
-      # Use jq to correctly escape the key and value for JSON.
-      # jq -R inputs raw string, -s slurps all input into one string, '.' outputs it as a JSON string.
-      # The output of jq -R -s '.' already includes the surrounding quotes for a JSON string.
-      escaped_key=$(jq -R -s '.' <<< "$key") 
-      escaped_val=$(jq -R -s '.' <<< "$val") 
-      json_pairs_array+=("${escaped_key}:${escaped_val}")
+    if ! "$first_pair"; then
+      json_output+=","
     fi
+    json_output+="\"$escaped_key\":\"$escaped_value\""
+    first_pair=false
   done
 
-  local final_json_content=""
-  if [ ${#json_pairs_array[@]} -gt 0 ]; then
-    # Join the "key":"value" pairs with commas
-    IFS=',' final_json_content="${json_pairs_array[*]}"
-  fi
-  echo -n "{${final_json_content}}"
-
+  echo -n "{$json_output}"
 }
 
 # Parses SCDF REST API responses for embedded errors and warnings, even if
@@ -60,16 +79,39 @@ build_json_from_props() {
 extract_and_log_api_messages() {
   local RESPONSE="$1"
   local LOGFILE="$2"
+  # Ensure jq is available or provide a non-jq alternative if necessary for this function
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARNING: jq command not found. Cannot extract detailed API error messages." | tee -a "$LOGFILE"
+    echo "Raw API Response: $RESPONSE" | tee -a "$LOGFILE" # Log raw response if jq isn't there
+    return
+  fi
+
   echo "$RESPONSE" | awk 'BEGIN{RS="}{"; ORS=""} {if(NR>1) print "}{"; print $0}' | while read -r obj; do
-    [[ "$obj" =~ ^\{ ]] || obj="{$obj"
-    [[ "$obj" =~ \}$ ]] || obj="$obj}"
-    ERRORS=$(echo "$obj" | jq -r '._embedded.errors[]?.message // empty' 2>/dev/null)
+    # Ensure obj is a valid JSON object before passing to jq
+    local current_obj=""
+    if [[ "$obj" =~ ^\{.*\}$ ]]; then # Basic check if it looks like a JSON object
+        current_obj="$obj"
+    elif [[ "$obj" =~ ^\{ ]]; then
+        current_obj="$obj}"
+    elif [[ "$obj" =~ \}$ ]]; then
+        current_obj="{$obj"
+    else
+        current_obj="{$obj}" # Best guess
+    fi
+    
+    # Check if current_obj is parseable JSON, otherwise skip jq processing
+    if ! echo "$current_obj" | jq empty > /dev/null 2>&1; then
+        echo "WARNING: Encountered non-JSON segment in API response: $current_obj" | tee -a "$LOGFILE"
+        continue
+    fi
+
+    ERRORS=$(echo "$current_obj" | jq -r '._embedded.errors[]?.message // empty' 2>/dev/null)
     if [[ -n "$ERRORS" ]]; then
       while IFS= read -r msg; do
         [[ -n "$msg" ]] && echo "ERROR: $msg" | tee -a "$LOGFILE"
       done <<< "$ERRORS"
     fi
-    WARNINGS=$(echo "$obj" | jq -r '._embedded.warnings[]?.message // empty' 2>/dev/null)
+    WARNINGS=$(echo "$current_obj" | jq -r '._embedded.warnings[]?.message // empty' 2>/dev/null)
     if [[ -n "$WARNINGS" ]]; then
       while IFS= read -r msg; do
         [[ -n "$msg" ]] && echo "WARNING: $msg" | tee -a "$LOGFILE"

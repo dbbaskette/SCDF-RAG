@@ -303,12 +303,16 @@ test_hdfs_app() {
   # DEPLOY_PROPS+=",deployer.hadoop-hdfs.kubernetes.environmentVariables=HADOOP_USER_NAME=hdfs"
   # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authentication=simple"
   # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authorization=false"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUser=${clean_HDFS_USER}"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUri=${clean_HDFS_URI}"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsPath=${clean_HDFS_REMOTE_DIR}"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pseudoop=${clean_HDFSWATCHER_PSEUDOOP}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUser=${HDFS_USER}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUri=${HDFS_URI}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsPath=${HDFS_REMOTE_DIR}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
+  # Set Java version for buildpack configuration (Cloud Foundry)
+  #DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.environmentVariables.JBP_CONFIG_OPEN_JDK_JRE={jre: { version: 21.+ }}"
+  DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+ } }"
+
   # Ensure a writable temporary path for Cloud Foundry for this test stream
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.local-storage-path=/tmp/hdfsWatcherLogTest-temp"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.local-storage-path=${HDFSWATCHER_LOCAL_STORAGE_PATH}"
   DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # Assuming this literal is clean
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.profiles.active=scdf"  
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.config.enabled=false"  
