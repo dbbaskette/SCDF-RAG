@@ -224,11 +224,15 @@ test_hdfs_app() {
   # 3. Prepare and deploy the stream
   local stream_topic_name="${test_stream_name}-topic" # Unique topic for this stream
   local deploy_props_list=(
-    "app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
-    "app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
-    "app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
-    "app.hdfsWatcher.hdfswatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}
+    #"app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
+    #"app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
+    #"app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
+    "app.hdfsWatcher.hdfswatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
     "app.hdfsWatcher.hdfswatcher.local-storage-path=${HDFSWATCHER_LOCAL_STORAGE_PATH}"
+    # --- Key change for Java 17 ---
+    # Use JBP_CONFIG_OPEN_JDK_JRE to specify Java 17 for your hdfsWatcher app
+    "app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
+    # ---
     # "app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI:-}" # Optional, include if set
     "app.hdfsWatcher.hdfswatcher.pollInterval=10000" # 10 seconds
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
