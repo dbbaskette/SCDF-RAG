@@ -96,7 +96,6 @@ register_hdfs_watcher_app() {
   local response_body; response_body=$(cat "$response_body_file"); rm -f "$response_body_file"
   if [ "$response_code" == "201" ] || [ "$response_code" == "200" ]; then # 200 can also mean success for updates/force
     echo "Successfully registered $app_type app '$app_name' (HTTP $response_code)."
-    # Add a brief pause or a loop to verify registration if needed, similar to the unregistration wait.
     return 0
   else
     echo "Error registering $app_type app '$app_name': HTTP $response_code." >&2; echo "Response body: $response_body" >&2; return 1;
@@ -152,10 +151,32 @@ create_stream_definition_api() {
   local response_body_file
   response_body_file=$(mktemp)
   local response_code
+  # URL encode the definition
+  local encoded_dsl_definition
+  if command -v jq >/dev/null 2>&1; then
+    encoded_dsl_definition=$(jq -sRr @uri <<< "$dsl_definition")
+  else
+    # Basic URL encoding (may not cover all edge cases like jq's @uri)
+    encoded_dsl_definition=$(echo -n "$dsl_definition" | awk 'BEGIN {
+        while ((getline > 0) == 1) {
+            for (i=1; i<=length($0); ++i) {
+                c = substr($0, i, 1)
+                if (c ~ /[a-zA-Z0-9._~-]/) {
+                    printf "%s", c
+                } else {
+                    printf "%%%02X", ord(c)
+                }
+            }
+        }
+    }')
+  fi
+
   response_code=$(curl -s -k -w "%{http_code}" -X POST \
     -H "Authorization: Bearer $current_token" \
     -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "name=${stream_name}&definition=${dsl_definition}&description=Test HDFS Watcher to Log stream" \
+    --data-urlencode "name=${stream_name}" \
+    --data-urlencode "definition=${dsl_definition}" \
+    --data-urlencode "description=Test HDFS Watcher to Log stream" \
     "${scdf_endpoint}/streams/definitions" -o "$response_body_file")
 
   local response_body
@@ -221,14 +242,15 @@ test_hdfs_app() {
   # Critical variable checks
   if [ -z "${SCDF_CF_URL:-}" ]; then echo "Error: SCDF_CF_URL is not set." >&2; return 1; fi
   if [ -z "${SCDF_TOKEN_URL:-}" ]; then echo "Error: SCDF_TOKEN_URL is not set." >&2; return 1; fi
-  # Check for HDFS variables (needed for deployment properties)
-  if [ -z "${HDFS_URI:-}" ]; then echo "Error: HDFS_URI is not set (expected in create_stream.properties or scdf_env.properties)." >&2; return 1; fi
+  
+  # Check for HDFS variables and other required properties
   if [ -z "${HDFS_USER:-}" ]; then echo "Error: HDFS_USER is not set." >&2; return 1; fi
+  if [ -z "${HDFS_URI:-}" ]; then echo "Error: HDFS_URI is not set." >&2; return 1; fi
   if [ -z "${HDFS_REMOTE_DIR:-}" ]; then echo "Error: HDFS_REMOTE_DIR is not set." >&2; return 1; fi
   if [ -z "${HDFSWATCHER_PSEUDOOP:-}" ]; then echo "Error: HDFSWATCHER_PSEUDOOP is not set." >&2; return 1; fi
   if [ -z "${HDFSWATCHER_LOCAL_STORAGE_PATH:-}" ]; then echo "Error: HDFSWATCHER_LOCAL_STORAGE_PATH is not set." >&2; return 1; fi
   if [ -z "${HDFSWATCHER_OUTPUT_STREAM_NAME:-}" ]; then echo "Error: HDFSWATCHER_OUTPUT_STREAM_NAME is not set." >&2; return 1; fi
-
+  # HDFS_WEBHDFS_URI is optional, so no check here. Poll interval has a default.
 
   if ! get_oauth_token; then echo "Authentication failed. Exiting." >&2; return 1; fi
 
@@ -244,67 +266,67 @@ test_hdfs_app() {
   echo "hdfsWatcher app registration step completed."
 
   # --- Stream Creation and Deployment ---
-  local test_stream_name="hdfsWatcherLogTest"
-  # Define a clean Stream DSL
-  local stream_dsl="hdfsWatcher | log"
-  
-  # 1. Destroy existing stream (if any)
-  if ! destroy_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
-      echo "Warning: Could not fully destroy existing stream '$test_stream_name'. Proceeding with caution."
+  local STREAM_NAME="hdfsWatcherLogTest" # Renamed from test_stream_name to avoid conflict if sourced
+  local stream_dsl="hdfsWatcher | log"  # Renamed from STREAM_DEF for clarity
+
+  # 1. Destroy existing stream (if any) - already done by `destroy_stream` called earlier in some flows,
+  # but good to ensure it's clean before creating. The `destroy_stream` in this file is robust.
+  if ! destroy_stream "$STREAM_NAME" "$token" "$SCDF_CF_URL"; then
+      echo "Warning: Could not fully destroy existing stream '$STREAM_NAME' during test_hdfs_app. Proceeding with caution."
   fi
 
-  # 2. Create new stream definition
-  if ! create_stream_definition_api "$test_stream_name" "$stream_dsl" "$token" "$SCDF_CF_URL"; then
-      echo "Failed to create stream definition for '$test_stream_name'. Exiting." >&2
+  # 2. Create new stream definition using the helper function
+  if ! create_stream_definition_api "$STREAM_NAME" "$stream_dsl" "$token" "$SCDF_CF_URL"; then
+      echo "Failed to create stream definition for '$STREAM_NAME'. Exiting." >&2
       return 1
   fi
-  echo "Stream definition '$test_stream_name' created."
+  echo "Stream definition '$STREAM_NAME' created."
 
   # 3. Prepare and deploy the stream
-  local deploy_props_list=(
-    # --- Properties for hdfsWatcher app ---
-    "app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
-    "app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
-    "app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
-    "app.hdfsWatcher.hdfswatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
-    # Ensure a writable temporary path for Cloud Foundry for this test stream
-    "app.hdfsWatcher.hdfswatcher.local-storage-path=/tmp/hdfsWatcherLogTest-temp"
-    "app.hdfsWatcher.hdfswatcher.pollInterval=10000"
-    "app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
-    "app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${test_stream_name}"
-    "app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfs.source.HdfsSourceProperties=DEBUG"
-    # Management properties (optional, SCDF often auto-configures metrics tags)
-    "app.hdfsWatcher.management.endpoints.web.exposure.include=health,info,bindings"
-    
-    # Cloud Foundry Java 17 environment variable for hdfsWatcher
-    "deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
-    
-    # --- Properties for log app ---
-    "app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
-    "app.log.spring.cloud.stream.bindings.input.group=${test_stream_name}"
-    "app.log.logging.level.root=INFO"
-    "app.log.management.endpoints.web.exposure.include=health,info,bindings"
-  )
+  DEPLOY_PROPS=""
+  # DEPLOY_PROPS+=",deployer.hadoop-hdfs.kubernetes.environmentVariables=HADOOP_USER_NAME=hdfs"
+  # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authentication=simple"
+  # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authorization=false"
+  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUser=$HDFS_USER"
+  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUri=$HDFS_URI"
+  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsPath=$HDFS_REMOTE_DIR"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
+  # Ensure a writable temporary path for Cloud Foundry for this test stream
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.local-storage-path=/tmp/hdfsWatcherLogTest-temp"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # Using 10000 as per previous discussions
+  DEPLOY_PROPS+=",app.hdfsWatcher.spring.profiles.active=scdf"  
+  DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.config.enabled=false"  
+  DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${STREAM_NAME}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream=DEBUG"
+  DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.integration=DEBUG"
+  DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
+  DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfsWatcher.source=DEBUG"
+  DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.apache.hadoop=DEBUG"
   # Conditionally add webhdfsUri for hdfsWatcher
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
-    deploy_props_list+=("app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI}")
+    DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.webhdfsUri=${HDFS_WEBHDFS_URI}"
   fi
-  local deployment_properties_str
-  IFS=',' deployment_properties_str="${deploy_props_list[*]}"
+  # Cloud Foundry Java 17 environment variable for hdfsWatcher
+  DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
 
-  echo "ACTUAL DEPLOYMENT PROPERTIES: $deployment_properties_str"
+  # --- Properties for log app ---
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=${STREAM_NAME}"
+  DEPLOY_PROPS+=",app.log.logging.level.root=INFO"
 
-  if ! deploy_stream_api "$test_stream_name" "$deployment_properties_str" "$token" "$SCDF_CF_URL"; then
-      echo "Failed to deploy stream '$test_stream_name'. Exiting." >&2
+  # Debug: Output the constructed DEPLOY_PROPS string
+  echo "[DEBUG] Constructed DEPLOY_PROPS string: $DEPLOY_PROPS"
+
+  # 4. Deploy the stream using the helper function
+  if ! deploy_stream_api "$STREAM_NAME" "$DEPLOY_PROPS" "$token" "$SCDF_CF_URL"; then
+      echo "Failed to deploy stream '$STREAM_NAME'. Exiting." >&2
       return 1
   fi
-  echo "Stream '$test_stream_name' deployment initiated."
-  # --- End Stream Creation and Deployment ---
-
-  echo "Authentication, app registration, and stream deployment flow complete."
-  echo "Test stream '$test_stream_name' (DSL: $stream_dsl) should be deploying."
-  echo "Monitor SCDF UI for status. HDFS Location: ${HDFS_URI}${HDFS_REMOTE_DIR}"
-}
+  echo "Stream '$STREAM_NAME' deployment initiated."
+  echo "Test stream '$STREAM_NAME' (DSL: $stream_dsl) should be deploying."
+  echo "Monitor SCDF UI for status. HDFS Location (if applicable): ${HDFS_URI}${HDFS_REMOTE_DIR}"
+} # Correct placement for the end of test_hdfs_app function
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   test_hdfs_app
