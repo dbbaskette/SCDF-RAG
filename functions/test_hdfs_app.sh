@@ -56,15 +56,51 @@ register_hdfs_watcher_app() {
   local current_token="$1"; local scdf_endpoint="$2"; local app_type="source"; local app_name="hdfsWatcher"
   local app_uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"; local force_registration="true"
   echo "--- ${app_name} App Registration ---"
+
+  # Check if the app is already registered
   if is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; then
-    if [ "$force_registration" != "true" ]; then echo "Info: $app_type app '$app_name' already registered. Skipping."; return 0; fi
-    echo "Info: $app_type app '$app_name' already registered, forcing re-registration."
-  else echo "Info: $app_type app '$app_name' not found. Proceeding with registration."; fi
+    echo "[INFO] $app_type app '$app_name' is already registered. Deleting it first..."
+    local delete_response_code
+    delete_response_code=$(curl -s -k -w "%{http_code}" -X DELETE \
+      -H "Authorization: Bearer $current_token" \
+      "${scdf_endpoint}/apps/${app_type}/${app_name}" -o /dev/null)
+
+    if [ "$delete_response_code" == "200" ]; then
+      echo "[INFO] Successfully sent DELETE request for $app_type app '$app_name' (HTTP $delete_response_code)."
+      echo -n "[INFO] Waiting for app '$app_name' to be unregistered..."
+      local wait_time=0
+      local max_wait_time=30 # seconds
+      while is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; do
+        if [ "$wait_time" -ge "$max_wait_time" ]; then
+          echo ""
+          echo "[WARN] Timed out waiting for app '$app_name' to be unregistered. Proceeding with registration attempt anyway."
+          break
+        fi
+        echo -n "."
+        sleep 2
+        wait_time=$((wait_time + 2))
+      done
+      if [ "$wait_time" -lt "$max_wait_time" ]; then
+         echo " Unregistered."
+      fi
+    else
+      echo "[WARN] Failed to delete $app_type app '$app_name' (HTTP $delete_response_code). Will attempt registration anyway."
+    fi
+  else
+    echo "[INFO] $app_type app '$app_name' is not currently registered. Proceeding with new registration."
+  fi
+
   echo "Registering $app_type app '$app_name' from URI: $app_uri"
   local data="uri=${app_uri}&force=${force_registration}"; local response_body_file; response_body_file=$(mktemp); local response_code
   response_code=$(curl -s -k -w "%{http_code}" -X POST -H "Authorization: Bearer $current_token" -H "Content-Type: application/x-www-form-urlencoded" -d "$data" "${scdf_endpoint}/apps/${app_type}/${app_name}" -o "$response_body_file")
   local response_body; response_body=$(cat "$response_body_file"); rm -f "$response_body_file"
-  if [ "$response_code" == "201" ]; then echo "Successfully registered $app_type app '$app_name' (HTTP $response_code)."; return 0; else echo "Error registering $app_type app '$app_name': HTTP $response_code." >&2; echo "Response body: $response_body" >&2; return 1; fi
+  if [ "$response_code" == "201" ] || [ "$response_code" == "200" ]; then # 200 can also mean success for updates/force
+    echo "Successfully registered $app_type app '$app_name' (HTTP $response_code)."
+    # Add a brief pause or a loop to verify registration if needed, similar to the unregistration wait.
+    return 0
+  else
+    echo "Error registering $app_type app '$app_name': HTTP $response_code." >&2; echo "Response body: $response_body" >&2; return 1;
+  fi
 }
 
 # --- Stream Management Functions ---
@@ -227,14 +263,15 @@ test_hdfs_app() {
     #"app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
     #"app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
     #"app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
-    "app.hdfsWatcher.hdfswatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
-    "app.hdfsWatcher.hdfswatcher.local-storage-path=${HDFSWATCHER_LOCAL_STORAGE_PATH}"
+    "app.hdfsWatcher.hdfsWatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
+    "app.hdfsWatcher.hdfsWatcher.local-storage-path=${HDFSWATCHER_LOCAL_STORAGE_PATH}"
     # --- Key change for Java 17 ---
     # Use JBP_CONFIG_OPEN_JDK_JRE to specify Java 17 for your hdfsWatcher app
-    "app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
+    #"app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
+
     # ---
     # "app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI:-}" # Optional, include if set
-    "app.hdfsWatcher.hdfswatcher.pollInterval=10000" # 10 seconds
+    "app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # 10 seconds
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${test_stream_name}"
     # "app.hdfsWatcher.spring.cloud.function.definition=hdfsSupplier" # Explicitly set if needed
@@ -242,11 +279,12 @@ test_hdfs_app() {
     "app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.log.spring.cloud.stream.bindings.input.group=${test_stream_name}"
     "app.log.logging.level.root=INFO" # Example logging for the log sink
-    # Add any common deployer properties if needed, e.g., memory limits
+    # Set JBP_CONFIG_OPEN_JDK_JRE for Java 17. Try with 'deployer.' prefix.
+    "deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
   )
   # Optional: Add webhdfsUri if it's set
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
-      deploy_props_list+=("app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI}")
+      deploy_props_list+=("app.hdfsWatcher.hdfsWatcher.webhdfsUri=${HDFS_WEBHDFS_URI}")
   fi
   
   local deployment_properties_str
