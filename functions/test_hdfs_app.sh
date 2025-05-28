@@ -211,12 +211,13 @@ deploy_stream_api() {
   local response_body_file
   response_body_file=$(mktemp)
   local response_code
-  response_code=$(curl -s -k -w "%{http_code}" -X POST \
-    -H "Authorization: Bearer $current_token" \
-    -H "Content-Type: application/json" \
-    -d "$deploy_json" \
-    "${scdf_endpoint}/streams/deployments/${stream_name}" -o "$response_body_file")
   
+  response_code=$(curl -s -k -w "%{http_code}" -X POST \
+  -H "Authorization: Bearer $current_token" \
+  -H "Content-Type: application/json" \
+  --data-binary "$deploy_json" \
+  "${scdf_endpoint}/streams/deployments/${stream_name}" -o "$response_body_file")
+
   local response_body
   response_body=$(cat "$response_body_file")
   rm -f "$response_body_file"
@@ -255,6 +256,22 @@ test_hdfs_app() {
   if ! get_oauth_token; then echo "Authentication failed. Exiting." >&2; return 1; fi
 
   local token; token=$(cat "$TOKEN_FILE") 
+
+  # Clean potentially problematic variables of trailing newlines/carriage returns
+  # It's good practice to clean variables that might come from files or complex assignments.
+  # Use a temporary variable for cleaning to avoid modifying the original if it's needed elsewhere
+  local clean_HDFS_USER="$(echo -n "${HDFS_USER}" | tr -d '\n\r')"
+  local clean_HDFS_URI="$(echo -n "${HDFS_URI}" | tr -d '\n\r')"
+  local clean_HDFS_REMOTE_DIR="$(echo -n "${HDFS_REMOTE_DIR}" | tr -d '\n\r')"
+  local clean_HDFSWATCHER_PSEUDOOP="$(echo -n "${HDFSWATCHER_PSEUDOOP}" | tr -d '\n\r')"
+  local clean_HDFSWATCHER_LOCAL_STORAGE_PATH="$(echo -n "${HDFSWATCHER_LOCAL_STORAGE_PATH}" | tr -d '\n\r')"
+  local clean_HDFSWATCHER_OUTPUT_STREAM_NAME="$(echo -n "${HDFSWATCHER_OUTPUT_STREAM_NAME}" | tr -d '\n\r')"
+  local clean_HDFS_WEBHDFS_URI="$(echo -n "${HDFS_WEBHDFS_URI:-}" | tr -d '\n\r')" # Handle optional
+
+  # Use a cleaned stream name for SCDF operations
+  local STREAM_NAME="hdfsWatcherLogTest"
+  local clean_STREAM_NAME="$(echo -n "${STREAM_NAME}" | tr -d '\n\r')"
+
   echo "Successfully authenticated to Cloud Foundry (or used existing valid token)."
 
   local final_validation_url="$SCDF_CF_URL/about"
@@ -266,18 +283,17 @@ test_hdfs_app() {
   echo "hdfsWatcher app registration step completed."
 
   # --- Stream Creation and Deployment ---
-  local STREAM_NAME="hdfsWatcherLogTest" # Renamed from test_stream_name to avoid conflict if sourced
   local stream_dsl="hdfsWatcher | log"  # Renamed from STREAM_DEF for clarity
 
   # 1. Destroy existing stream (if any) - already done by `destroy_stream` called earlier in some flows,
   # but good to ensure it's clean before creating. The `destroy_stream` in this file is robust.
-  if ! destroy_stream "$STREAM_NAME" "$token" "$SCDF_CF_URL"; then
+  if ! destroy_stream "$clean_STREAM_NAME" "$token" "$SCDF_CF_URL"; then
       echo "Warning: Could not fully destroy existing stream '$STREAM_NAME' during test_hdfs_app. Proceeding with caution."
   fi
 
   # 2. Create new stream definition using the helper function
-  if ! create_stream_definition_api "$STREAM_NAME" "$stream_dsl" "$token" "$SCDF_CF_URL"; then
-      echo "Failed to create stream definition for '$STREAM_NAME'. Exiting." >&2
+  if ! create_stream_definition_api "$clean_STREAM_NAME" "$stream_dsl" "$token" "$SCDF_CF_URL"; then
+      echo "Failed to create stream definition for '$clean_STREAM_NAME'. Exiting." >&2
       return 1
   fi
   echo "Stream definition '$STREAM_NAME' created."
@@ -287,13 +303,13 @@ test_hdfs_app() {
   # DEPLOY_PROPS+=",deployer.hadoop-hdfs.kubernetes.environmentVariables=HADOOP_USER_NAME=hdfs"
   # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authentication=simple"
   # DEPLOY_PROPS+=",app.hadoop-hdfs.hadoop.security.authorization=false"
-  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUser=$HDFS_USER"
-  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUri=$HDFS_URI"
-  #DEPLOY_PROPS+=",app.hdfsWatcher.hdfsPath=$HDFS_REMOTE_DIR"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUser=${clean_HDFS_USER}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsUri=${clean_HDFS_URI}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsPath=${clean_HDFS_REMOTE_DIR}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pseudoop=${clean_HDFSWATCHER_PSEUDOOP}"
   # Ensure a writable temporary path for Cloud Foundry for this test stream
   DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.local-storage-path=/tmp/hdfsWatcherLogTest-temp"
-  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # Using 10000 as per previous discussions
+  DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # Assuming this literal is clean
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.profiles.active=scdf"  
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.config.enabled=false"  
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
@@ -305,19 +321,22 @@ test_hdfs_app() {
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.apache.hadoop=DEBUG"
   # Conditionally add webhdfsUri for hdfsWatcher
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
-    DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.webhdfsUri=${HDFS_WEBHDFS_URI}"
+    DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.webhdfsUri=${clean_HDFS_WEBHDFS_URI}"
   fi
   # Cloud Foundry Java 17 environment variable for hdfsWatcher
-  DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
+  #DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
 
   # --- Properties for log app ---
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=${STREAM_NAME}"
-  DEPLOY_PROPS+=",app.log.logging.level.root=INFO"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=${clean_HDFSWATCHER_OUTPUT_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=${clean_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.log.logging.level.root=INFO" # Assuming this literal is clean
+
+  # Aggressively clean the entire DEPLOY_PROPS string of newlines and carriage returns
+  DEPLOY_PROPS="$(echo -n "$DEPLOY_PROPS" | tr -d '\n\r')"
 
   # Debug: Output the constructed DEPLOY_PROPS string
   echo "[DEBUG] Constructed DEPLOY_PROPS string: $DEPLOY_PROPS"
-
+  
   # 4. Deploy the stream using the helper function
   if ! deploy_stream_api "$STREAM_NAME" "$DEPLOY_PROPS" "$token" "$SCDF_CF_URL"; then
       echo "Failed to deploy stream '$STREAM_NAME'. Exiting." >&2
@@ -325,7 +344,7 @@ test_hdfs_app() {
   fi
   echo "Stream '$STREAM_NAME' deployment initiated."
   echo "Test stream '$STREAM_NAME' (DSL: $stream_dsl) should be deploying."
-  echo "Monitor SCDF UI for status. HDFS Location (if applicable): ${HDFS_URI}${HDFS_REMOTE_DIR}"
+  echo "Monitor SCDF UI for status. HDFS Location (if applicable): ${clean_HDFS_URI}${clean_HDFS_REMOTE_DIR}"
 } # Correct placement for the end of test_hdfs_app function
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -4,53 +4,54 @@
 # Converts a comma-separated properties string into a JSON object string.
 # Handles special cases for Kubernetes environment variables.
 build_json_from_props() {
-  local props="$1"
-  local json=""
-  local first=1
+  # Input string should already be cleaned of \n and \r by the caller
+  local props_str="$1"
+  local json_pairs_array=() # Store "key":"value" pairs
 
-  # Special handling for deployer.textProc.kubernetes.environmentVariables
-  local k8s_env_key="deployer.textProc.kubernetes.environmentVariables="
-  local k8s_env_value=""
-  if [[ "$props" == *"$k8s_env_key"* ]]; then
-    # Extract the value for the special key (everything after the key)
-    k8s_env_value="${props#*${k8s_env_key}}"
-    # If there are other properties after, cut at the next comma
-    if [[ "$k8s_env_value" == *,* ]]; then
-      k8s_env_value="${k8s_env_value%%,*}"
-    fi
-    # Remove the special property from the original string
-    props="${props/${k8s_env_key}${k8s_env_value}/}"
-    # Remove any leading or trailing commas
-    props="${props#,}"
-    props="${props%,}"
-    # Replace ; and | with , in the env value
-    k8s_env_value="${k8s_env_value//[;|]/,}"
+  # The input props_str from test_hdfs_app.sh might start with a comma.
+  # Remove the leading comma if it exists.
+  if [[ "$props_str" == ,* ]]; then
+    props_str="${props_str#*,}"
   fi
 
-  # Now process the remaining properties (split at commas)
-  IFS=',' read -ra PAIRS <<< "$props"
+  # Use a more robust IFS for splitting, handling potential whitespace around commas
+  local OLD_IFS="$IFS"
+  IFS=',' read -ra PAIRS <<< "$props_str"
+  IFS="$OLD_IFS"
+
   for pair in "${PAIRS[@]}"; do
-    # Skip empty
-    [[ -z "$pair" ]] && continue
+    if [[ -z "$pair" ]]; then
+      continue
+    fi
+
     key="${pair%%=*}"
     val="${pair#*=}"
-    # Remove possible surrounding spaces
-    key="$(echo -n "$key" | xargs)"
-    val="$(echo -n "$val" | xargs)"
+
+    # Keys and values should be clean of \n and \r at this point.
+    # Trim only leading/trailing spaces and tabs using sed.
+    key="$(echo -n "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    val="$(echo -n "$val" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+
+
     # Only add if key is not empty
     if [[ -n "$key" ]]; then
-      [[ $first -eq 0 ]] && json+="," || first=0
-      json+="\"$key\":\"$val\""
+      # Use jq to correctly escape the key and value for JSON.
+      # jq -R inputs raw string, -s slurps all input into one string, '.' outputs it as a JSON string.
+      # The output of jq -R -s '.' already includes the surrounding quotes for a JSON string.
+      escaped_key=$(jq -R -s '.' <<< "$key") 
+      escaped_val=$(jq -R -s '.' <<< "$val") 
+      json_pairs_array+=("${escaped_key}:${escaped_val}")
     fi
   done
 
-  # Add the special env key if present
-  if [[ -n "$k8s_env_value" ]]; then
-    [[ $first -eq 0 ]] && json+="," || first=0
-    json+="\"deployer.textProc.kubernetes.environmentVariables\":\"$k8s_env_value\""
+  local final_json_content=""
+  if [ ${#json_pairs_array[@]} -gt 0 ]; then
+    # Join the "key":"value" pairs with commas
+    IFS=',' final_json_content="${json_pairs_array[*]}"
   fi
+  echo -n "{${final_json_content}}"
 
-  echo -n "{$json}"
 }
 
 # Parses SCDF REST API responses for embedded errors and warnings, even if
