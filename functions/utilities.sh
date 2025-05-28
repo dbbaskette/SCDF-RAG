@@ -73,7 +73,7 @@ build_json_from_props() {
         # Escape newlines and carriage returns
         temp_val="${temp_val//$'\n'/\\n}"
         temp_val="${temp_val//$'\r'/\\r}"
-        json+="\"$key\":\"$temp_val\""
+        json+="\"$key\":\"$temp_val\"" # Use the escaped value here
       fi
     fi
 

@@ -225,6 +225,9 @@ test_hdfs_app() {
   if [ -z "${HDFS_URI:-}" ]; then echo "Error: HDFS_URI is not set (expected in create_stream.properties or scdf_env.properties)." >&2; return 1; fi
   if [ -z "${HDFS_USER:-}" ]; then echo "Error: HDFS_USER is not set." >&2; return 1; fi
   if [ -z "${HDFS_REMOTE_DIR:-}" ]; then echo "Error: HDFS_REMOTE_DIR is not set." >&2; return 1; fi
+  if [ -z "${HDFSWATCHER_PSEUDOOP:-}" ]; then echo "Error: HDFSWATCHER_PSEUDOOP is not set." >&2; return 1; fi
+  if [ -z "${HDFSWATCHER_LOCAL_STORAGE_PATH:-}" ]; then echo "Error: HDFSWATCHER_LOCAL_STORAGE_PATH is not set." >&2; return 1; fi
+  if [ -z "${HDFSWATCHER_OUTPUT_STREAM_NAME:-}" ]; then echo "Error: HDFSWATCHER_OUTPUT_STREAM_NAME is not set." >&2; return 1; fi
 
 
   if ! get_oauth_token; then echo "Authentication failed. Exiting." >&2; return 1; fi
@@ -242,12 +245,12 @@ test_hdfs_app() {
 
   # --- Stream Creation and Deployment ---
   local test_stream_name="hdfsWatcherLogTest"
+  # Define a clean Stream DSL
   local stream_dsl="hdfsWatcher | log"
   
   # 1. Destroy existing stream (if any)
   if ! destroy_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
       echo "Warning: Could not fully destroy existing stream '$test_stream_name'. Proceeding with caution."
-      # Not returning 1 here, as creation might still work or fail more clearly.
   fi
 
   # 2. Create new stream definition
@@ -258,36 +261,34 @@ test_hdfs_app() {
   echo "Stream definition '$test_stream_name' created."
 
   # 3. Prepare and deploy the stream
-  local stream_topic_name="${test_stream_name}-topic" # Unique topic for this stream
   local deploy_props_list=(
-    #"app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
-    #"app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
-    #"app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
-    "app.hdfsWatcher.hdfsWatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
-    "app.hdfsWatcher.hdfsWatcher.local-storage-path=${HDFSWATCHER_LOCAL_STORAGE_PATH}"
-    # --- Key change for Java 17 ---
-    # Use JBP_CONFIG_OPEN_JDK_JRE to specify Java 17 for your hdfsWatcher app
-    #"app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
-
-    # ---
-    # "app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI:-}" # Optional, include if set
-    "app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # 10 seconds
+    # --- Properties for hdfsWatcher app ---
+    "app.hdfsWatcher.hdfswatcher.hdfsUser=${HDFS_USER}"
+    "app.hdfsWatcher.hdfswatcher.hdfsUri=${HDFS_URI}"
+    "app.hdfsWatcher.hdfswatcher.hdfsPath=${HDFS_REMOTE_DIR}"
+    "app.hdfsWatcher.hdfswatcher.pseudoop=${HDFSWATCHER_PSEUDOOP}"
+    # Ensure a writable temporary path for Cloud Foundry for this test stream
+    "app.hdfsWatcher.hdfswatcher.local-storage-path=/tmp/hdfsWatcherLogTest-temp"
+    "app.hdfsWatcher.hdfswatcher.pollInterval=10000"
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${test_stream_name}"
-    #"app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.JBP_CONFIG_OPEN_JDK_JRE='{ jre: { version: 17.+ } }'"
-    "app.hdfsWatcher.spring.cloud.deployer.cloudfoundry.environment.BP_JVM_VERSION=17"
-    # "app.hdfsWatcher.spring.cloud.function.definition=hdfsSupplier" # Explicitly set if needed
-    "app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfs.source.HdfsSourceProperties=DEBUG" # Example logging
+    "app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfs.source.HdfsSourceProperties=DEBUG"
+    # Management properties (optional, SCDF often auto-configures metrics tags)
+    "app.hdfsWatcher.management.endpoints.web.exposure.include=health,info,bindings"
+    
+    # Cloud Foundry Java 17 environment variable for hdfsWatcher
+    "deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
+    
+    # --- Properties for log app ---
     "app.log.spring.cloud.stream.bindings.input.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
     "app.log.spring.cloud.stream.bindings.input.group=${test_stream_name}"
-    "app.log.logging.level.root=INFO" # Example logging for the log sink
-
+    "app.log.logging.level.root=INFO"
+    "app.log.management.endpoints.web.exposure.include=health,info,bindings"
   )
-  # Optional: Add webhdfsUri if it's set
+  # Conditionally add webhdfsUri for hdfsWatcher
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
-      deploy_props_list+=("app.hdfsWatcher.hdfsWatcher.webhdfsUri=${HDFS_WEBHDFS_URI}")
+    deploy_props_list+=("app.hdfsWatcher.hdfswatcher.webhdfsUri=${HDFS_WEBHDFS_URI}")
   fi
-  
   local deployment_properties_str
   IFS=',' deployment_properties_str="${deploy_props_list[*]}"
 
