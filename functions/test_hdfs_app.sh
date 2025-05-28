@@ -102,6 +102,57 @@ register_hdfs_watcher_app() {
   fi
 }
 
+# --- Register textProc App ---
+register_text_proc_app() {
+  local current_token="$1"; local scdf_endpoint="$2"; local app_type="processor"; local app_name="textProc"
+  local app_uri="https://github.com/dbbaskette/textProc/releases/download/v0.0.1/textProc-0.0.1-SNAPSHOT.jar"; local force_registration="true"
+  echo "--- ${app_name} App Registration ---"
+
+  # Check if the app is already registered
+  if is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; then
+    echo "[INFO] $app_type app '$app_name' is already registered. Deleting it first..."
+    local delete_response_code
+    delete_response_code=$(curl -s -k -w "%{http_code}" -X DELETE \
+      -H "Authorization: Bearer $current_token" \
+      "${scdf_endpoint}/apps/${app_type}/${app_name}" -o /dev/null)
+
+    if [ "$delete_response_code" == "200" ]; then
+      echo "[INFO] Successfully sent DELETE request for $app_type app '$app_name' (HTTP $delete_response_code)."
+      echo -n "[INFO] Waiting for app '$app_name' to be unregistered..."
+      local wait_time=0
+      local max_wait_time=30 # seconds
+      while is_app_registered_in_test_script "$app_type" "$app_name" "$current_token" "$scdf_endpoint"; do
+        if [ "$wait_time" -ge "$max_wait_time" ]; then
+          echo ""
+          echo "[WARN] Timed out waiting for app '$app_name' to be unregistered. Proceeding with registration attempt anyway."
+          break
+        fi
+        echo -n "."
+        sleep 2
+        wait_time=$((wait_time + 2))
+      done
+      if [ "$wait_time" -lt "$max_wait_time" ]; then
+         echo " Unregistered."
+      fi
+    else
+      echo "[WARN] Failed to delete $app_type app '$app_name' (HTTP $delete_response_code). Will attempt registration anyway."
+    fi
+  else
+    echo "[INFO] $app_type app '$app_name' is not currently registered. Proceeding with new registration."
+  fi
+
+  echo "Registering $app_type app '$app_name' from URI: $app_uri"
+  local data="uri=${app_uri}&force=${force_registration}"; local response_body_file; response_body_file=$(mktemp); local response_code
+  response_code=$(curl -s -k -w "%{http_code}" -X POST -H "Authorization: Bearer $current_token" -H "Content-Type: application/x-www-form-urlencoded" -d "$data" "${scdf_endpoint}/apps/${app_type}/${app_name}" -o "$response_body_file")
+  local response_body; response_body=$(cat "$response_body_file"); rm -f "$response_body_file"
+  if [ "$response_code" == "201" ] || [ "$response_code" == "200" ]; then # 200 can also mean success for updates/force
+    echo "Successfully registered $app_type app '$app_name' (HTTP $response_code)."
+    return 0
+  else
+    echo "Error registering $app_type app '$app_name': HTTP $response_code." >&2; echo "Response body: $response_body" >&2; return 1;
+  fi
+}
+
 # --- Stream Management Functions ---
 destroy_stream() {
   local stream_name="$1"
@@ -281,9 +332,11 @@ test_hdfs_app() {
 
   if ! register_hdfs_watcher_app "$token" "$SCDF_CF_URL"; then echo "Failed to register hdfsWatcher app. Exiting." >&2; return 1; fi
   echo "hdfsWatcher app registration step completed."
+  if ! register_text_proc_app "$token" "$SCDF_CF_URL"; then echo "Failed to register textProc app. Exiting." >&2; return 1; fi
+  echo "textProc app registration step completed."
 
   # --- Stream Creation and Deployment ---
-  local stream_dsl="hdfsWatcher | log"  # Renamed from STREAM_DEF for clarity
+  local stream_dsl="hdfsWatcher | textProc | log"  # Renamed from STREAM_DEF for clarity
 
   # 1. Destroy existing stream (if any) - already done by `destroy_stream` called earlier in some flows,
   # but good to ensure it's clean before creating. The `destroy_stream` in this file is robust.
@@ -316,13 +369,25 @@ test_hdfs_app() {
   DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.pollInterval=10000" # Assuming this literal is clean
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.profiles.active=scdf"  
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.config.enabled=false"  
-  DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=${HDFSWATCHER_OUTPUT_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=hdfswatcher-textproc"
   DEPLOY_PROPS+=",app.hdfsWatcher.spring.cloud.stream.bindings.output.group=${STREAM_NAME}"
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream=DEBUG"
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.integration=DEBUG"
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG"
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfsWatcher.source=DEBUG"
   DEPLOY_PROPS+=",app.hdfsWatcher.logging.level.org.apache.hadoop=DEBUG"
+
+  # textProc processor
+  DEPLOY_PROPS+=",app.textProc.spring.profiles.active=scdf"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.function.definition=textProc"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=hdfswatcher-textproc"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=${STREAM_NAME}"
+  DEPLOY_PROPS+=",app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.textProc.cloudfoundry.health-check-type=process"
+
+  DEPLOY_PROPS+=",deployer.textProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+ } }"
+
+
   # Conditionally add webhdfsUri for hdfsWatcher
   if [ -n "${HDFS_WEBHDFS_URI:-}" ]; then
     DEPLOY_PROPS+=",app.hdfsWatcher.hdfsWatcher.webhdfsUri=${clean_HDFS_WEBHDFS_URI}"
@@ -331,8 +396,8 @@ test_hdfs_app() {
   #DEPLOY_PROPS+=",deployer.hdfsWatcher.cloudfoundry.environmentVariables=JBP_CONFIG_OPEN_JDK_JRE={\\\"jre\\\":{\\\"version\\\":\\\"17.+\\\"}}"
 
   # --- Properties for log app ---
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=${clean_HDFSWATCHER_OUTPUT_STREAM_NAME}"
-  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=${clean_STREAM_NAME}"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.destination=textproc-to-log"
+  DEPLOY_PROPS+=",app.log.spring.cloud.stream.bindings.input.group=${STREAM_NAME}"
   DEPLOY_PROPS+=",app.log.logging.level.root=INFO" # Assuming this literal is clean
 
   # Aggressively clean the entire DEPLOY_PROPS string of newlines and carriage returns
