@@ -242,6 +242,8 @@ if [[ $TEST_MODE -eq 1 ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s3 - Running test_hdfs_app (includes CF auth) ==========" | tee -a "$LOG_FILE"
+        # Source the test_hdfs_app.sh script first
+        source "$(dirname "$0")/functions/test_hdfs_app.sh"
         TEST_MODE=0 test_hdfs_app # Changed TEST_MODE to 0 for this call
         ;;
       s4)
