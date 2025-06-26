@@ -17,10 +17,16 @@ source_properties
 
 default_hdfs_stream() {
   local STREAM_NAME="default-hdfs-stream"
-  # Check SCDF management endpoint before proceeding
-  if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-    echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-    exit 1
+  
+  # Skip SCDF server check if in test mode
+  if [[ "${TEST_MODE:-0}" -eq 0 ]]; then
+    # Check SCDF management endpoint before proceeding
+    if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
+      echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
+      exit 1
+    fi
+  else
+    echo "[TEST_MODE] Skipping SCDF server check"
   fi
   echo "[DEFAULT-STREAM] Creating stream: hdfsSource | textProc | embedProc | log (name: $STREAM_NAME)"
   # Destroy any existing pipeline and definitions to ensure a clean slate
@@ -32,61 +38,26 @@ default_hdfs_stream() {
   resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X DELETE "$SCDF_API_URL/streams/definitions/$STREAM_NAME")
   echo "$resp"
 
-  # Remove any previous textProc and embedProc processor registrations
-  echo "[INFO] Deleting previous textProc processor registration"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X DELETE "$SCDF_API_URL/apps/processor/textProc")
-  echo "$resp"
+  # Reregister applications: hdfsWatcher (source), textProc (processor), embedProc (processor)
+  # The reregister_app_by_name function (defined in create_stream.sh) will
+  # check if the app exists, delete it if it does, and then register it.
 
-  echo "[INFO] Deleting previous embedProc processor registration"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X DELETE "$SCDF_API_URL/apps/processor/embedProc")
-  echo "$resp"
+  # Define app URIs
+  local hdfs_watcher_uri="docker:dbbaskette/hdfs-source:latest" # Using the image previously for hadoop-hdfs
+  local textproc_uri="docker:dbbaskette/textproc:latest"
+  local embedproc_uri="docker:dbbaskette/embedproc:latest"
 
-  # Remove any previous hdfs-source app registration
-  echo "[INFO] Deleting previous hdfs-source app registration"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X DELETE "$SCDF_API_URL/apps/source/hdfs")
-  echo "$resp"
+  echo "[INFO] Reregistering hdfsWatcher source app with URI: $hdfs_watcher_uri"
+  reregister_app_by_name "source" "hdfsWatcher" "$hdfs_watcher_uri" "" "true"
 
-  # Wait for deregistration to propagate before re-registering (timeout after 60s)
-  echo -n "[INFO] Waiting for deregistration of textProc, embedProc, and hdfs-source"
-  SECONDS_WAITED=0
-  TIMEOUT=60
-  while (( SECONDS_WAITED < TIMEOUT )); do
-    DEF_STATUS_TEXTPROC=$(curl -s "$SCDF_API_URL/apps/processor/textProc")
-    DEF_STATUS_EMBEDPROC=$(curl -s "$SCDF_API_URL/apps/processor/embedProc")
-    DEF_STATUS_HDFSSOURCE=$(curl -s "$SCDF_API_URL/apps/source/hdfs")
-    if echo "$DEF_STATUS_TEXTPROC" | grep -q 'could not be found' && \
-       echo "$DEF_STATUS_EMBEDPROC" | grep -q 'could not be found' && \
-       echo "$DEF_STATUS_HDFSSOURCE" | grep -q 'could not be found'; then
-      echo " done after $SECONDS_WAITED seconds."
-      break
-    fi
-    echo -n "."
-    sleep 1
-    ((SECONDS_WAITED++))
-  done
-  if (( SECONDS_WAITED >= TIMEOUT )); then
-    echo ""
-    echo "[ERROR] Timed out waiting for app deregistration after $TIMEOUT seconds. Exiting."
-    exit 1
-  fi
+  echo "[INFO] Reregistering textProc processor app with URI: $textproc_uri"
+  reregister_app_by_name "processor" "textProc" "$textproc_uri" "" "true"
 
-  # Register the hdfs-source app with the latest Docker image
-  echo "[INFO] Registering hdfs-source app"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X POST "$SCDF_API_URL/apps/source/hadoop-hdfs" -d "uri=docker:dbbaskette/hdfs-source:latest" -d "force=true")
-  echo "$resp"
-
-  # Register the textProc processor with the latest Docker image
-  echo "[INFO] Registering textProc processor"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X POST "$SCDF_API_URL/apps/processor/textProc" -d "uri=docker:dbbaskette/textproc:latest" -d "force=true")
-  echo "$resp"
-
-  # Register the embedProc processor with the latest Docker image
-  echo "[INFO] Registering embedProc processor"
-  resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X POST "$SCDF_API_URL/apps/processor/embedProc" -d "uri=docker:dbbaskette/embedproc:latest" -d "force=true")
-  echo "$resp"
+  echo "[INFO] Reregistering embedProc processor app with URI: $embedproc_uri"
+  reregister_app_by_name "processor" "embedProc" "$embedproc_uri" "" "true"
 
   # Build the pipeline definition with all required HDFS source properties, now using log as sink
-  STREAM_DEF="hadoop-hdfs | textProc | embedProc | log"
+  STREAM_DEF="hdfsWatcher | textProc | embedProc | log"
   echo "[INFO] Creating stream definition for: $STREAM_NAME [$(date '+%Y-%m-%d %H:%M:%S')]"
   resp=$(curl -s -w "\n[HTTP_STATUS:%{http_code}]" -X POST "$SCDF_API_URL/streams/definitions" \
     -d "name=$STREAM_NAME" \

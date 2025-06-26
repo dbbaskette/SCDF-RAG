@@ -18,10 +18,16 @@ source_properties
 
 test_hdfs_textproc_app() {
   local STREAM_NAME="test-hdfsWatcher-textproc"
-  # Check SCDF management endpoint before proceeding
-  if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-    echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-    exit 1
+  
+  # Skip SCDF server check if in test mode
+  if [[ "${TEST_MODE:-0}" -eq 0 ]]; then
+    # Check SCDF management endpoint before proceeding
+    if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
+      echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
+      exit 1
+    fi
+  else
+    echo "[TEST_MODE] Skipping SCDF server check"
   fi
   echo "[TEST-HDFS-APP] Creating stream: hdfsWatcher | textProc | log (name: $STREAM_NAME)"
   # Destroy any existing pipeline and definitions to ensure a clean slate

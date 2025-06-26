@@ -1,0 +1,152 @@
+# rag-stream.deploy - Deployment properties for SCDF stream deployment
+# Format: key=value, one per line
+# These are taken from test_hdfs_app.sh deploy_props_array section
+
+# hdfsWatcher properties
+# ============================================
+# Global Deployment Properties
+# ============================================
+
+# ============================================
+# hdfsWatcher (Source) Configuration
+# ============================================
+
+# HDFS Connection Settings
+app.hdfsWatcher.hdfsWatcher.hdfsUser=hduser
+app.hdfsWatcher.hdfsWatcher.hdfsUri=hdfs://baskettecase.tplinkdns.com:9000
+app.hdfsWatcher.hdfsWatcher.hdfsPath=/user/hduser
+app.hdfsWatcher.hdfsWatcher.webhdfsUri=http://baskettecase.tplinkdns.com:9870
+
+
+
+# Application Settings
+app.hdfsWatcher.hdfsWatcher.pseudoop=true
+app.hdfsWatcher.hdfsWatcher.local-storage-path=/tmp/hdfsWatcher
+app.hdfsWatcher.hdfsWatcher.pollInterval=5000
+app.hdfsWatcher.spring.profiles.active=scdf
+app.hdfsWatcher.spring.cloud.config.enabled=false
+
+# Stream Bindings
+app.hdfsWatcher.spring.cloud.stream.bindings.output.destination=hdfswatcher-textproc
+
+# Logging Configuration
+app.hdfsWatcher.logging.level.org.springframework.cloud.stream=DEBUG
+app.hdfsWatcher.logging.level.org.springframework.integration=DEBUG
+app.hdfsWatcher.logging.level.org.springframework.cloud.stream.binder.rabbit=DEBUG
+app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfsWatcher.source=DEBUG
+app.hdfsWatcher.logging.level.org.apache.hadoop=DEBUG
+
+app.hdfsWatcher.spring.servlet.multipart.max-file-size=1GB
+app.hdfsWatcher.spring.servlet.multipart.max-request-size=1GB
+app.hdfsWatcher.spring.servlet.multipart.enabled=true
+
+
+# ============================================
+# hdfsWatcher (Source) Deployment Settings
+# ============================================
+deployer.hdfsWatcher.cloudfoundry.environment.JBP_CONFIG_TOMCAT='{tomcat: { max_http_post_size: 1073741824 }}'  # 1GB in bytes
+deployer.hdfsWatcher.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+} }
+deployer.hdfsWatcher.cloudfoundry.env.CF_ROUTE_MAX_REQUEST_BODY_SIZE=1G
+
+
+
+# ============================================
+# textProc (Processor) Configuration
+# ============================================
+
+# Application Settings
+app.textProc.spring.profiles.active=scdf
+app.textProc.spring.cloud.function.definition=textProc
+app.textProc.spring.cloud.config.enabled=false
+
+# Server Configuration
+app.textProc.server.port=8080
+app.textProc.server.address=0.0.0.0
+
+# Stream Bindings
+app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=hdfswatcher-textproc
+app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=rag-stream
+app.textProc.spring.cloud.stream.bindings.textProc-in-0.content-type=application/json
+app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-embedproc
+app.textProc.spring.cloud.stream.bindings.textProc-out-0.content-type=application/octet-stream
+
+# Management Endpoints
+app.textProc.management.server.port=-1
+app.textProc.management.endpoints.web.base-path=/actuator
+app.textProc.management.endpoints.web.exposure.include=health,info,env,metrics,httptrace,prometheus
+app.textProc.management.endpoint.health.show-details=always
+app.textProc.management.endpoint.health.show-components=always
+app.textProc.management.endpoint.health.probes.enabled=true
+app.textProc.management.endpoints.web.path-mapping.health=health
+
+
+# Logging Configuration
+app.textProc.logging.level.root=INFO
+app.textProc.logging.level.org.springframework=INFO
+app.textProc.logging.level.com.example=DEBUG
+
+# Web Configuration
+app.textProc.spring.web.resources.static-locations=classpath:/static/,classpath:/public/
+app.textProc.spring.mvc.static-path-pattern=/**
+
+# Cloud Foundry Deployment Settings
+deployer.textProc.cloudfoundry.health-check-type=http
+deployer.textProc.cloudfoundry.health-check-http-endpoint=/actuator/health
+deployer.textProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+} }
+#deployer.textProc.cloudfoundry.startup-timeout=600
+#deployer.textProc.memory=2G
+#deployer.textProc.cloudfoundry.health-check-timeout=120
+
+# ============================================
+# embedProc (Processor) Configuration
+# ============================================
+
+# Application Settings
+app.embedProc.spring.profiles.active=scdf
+app.embedProc.spring.cloud.function.definition=embedProc
+app.embedProc.spring.cloud.config.enabled=false
+
+
+# Stream Bindings
+app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.destination=textproc-embedproc
+app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.group=rag-stream
+app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.destination=embedproc-log
+
+# Management Endpoints
+app.embedProc.management.endpoints.web.exposure.include=health
+app.embedProc.management.endpoint.health.show-details=always
+
+# Logging Configuration
+app.embedProc.logging.level.root=INFO
+app.embedProc.logging.level.org.springframework=DEBUG
+app.embedProc.logging.level.cloudfoundry-client=DEBUG
+
+# Cloud Foundry Deployment Settings
+deployer.embedProc.cloudfoundry.health-check-type=process
+deployer.embedProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+} }
+deployer.embedProc.cloudfoundry.startup-timeout=300
+deployer.embedProc.cloudfoundry.services=embed-model,embed-db
+
+# ============================================
+# log (Sink) Configuration
+# ============================================
+
+# Stream Bindings
+app.log.spring.cloud.stream.bindings.input.destination=embedproc-log
+
+# ============================================
+# Global Deployer Settings
+# ============================================
+# Add any global deployer settings here
+
+# ============================================
+# Environment-Specific Overrides
+# ============================================
+# Add environment-specific overrides below
+# Example:
+# if [[ $ENV == "prod" ]]; then
+#   app.textProc.server.port=8081
+# fi
+
+# If HDFS_WEBHDFS_URI is set, uncomment and set the following:
+# app.hdfsWatcher.hdfsWatcher.webhdfsUri=<value>

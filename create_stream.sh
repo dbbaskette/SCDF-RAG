@@ -1,25 +1,78 @@
 #!/bin/bash
 
-
-
-# Set SCDF_API_URL from environment or use default
-SCDF_API_URL=${SCDF_SERVER_URL:-http://localhost:30080}
-
-# Check SCDF management endpoint before sourcing anything else
-if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-  echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-  exit 1
+# Process command line arguments
+TEST_MODE=0
+if [[ "$1" == "--test" ]]; then
+    TEST_MODE=1
+    echo "[INFO] Running in test mode - skipping SCDF server checks"
+    # Shift the --test argument so it doesn't interfere with other argument processing
+    shift
 fi
 
-# Source environment setup and credentials functions
-echo "[INFO] Sourcing environment setup..."
+# Source environment setup and properties
 source "$(dirname "$0")/functions/env_setup.sh"
+source_properties
+
 echo "[INFO] Environment setup complete."
+
+# Only check SCDF server if not in test mode
+if [[ $TEST_MODE -eq 0 ]]; then
+    if ! check_scdf_server; then
+        exit 1
+    fi
+    # Second SCDF server check, also conditional on not being in test mode
+    if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
+      echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
+      exit 1
+    fi
+fi
 
 # Source app registration functions
 echo "[INFO] Sourcing app registration functions..."
 source "$(dirname "$0")/functions/app_registration.sh"
 echo "[INFO] App registration functions loaded."
+
+# --- Function to check, delete if exists, and then register an SCDF app ---
+# This function ensures an app is freshly registered.
+# It assumes SCDF_API_URL is set and register_app function is available.
+# Usage: reregister_app_by_name <app_type> <app_name> <app_uri> [app_metadata_uri] [force_registration_flag_for_register_app]
+reregister_app_by_name() {
+  local app_type="$1"
+  local app_name="$2"
+  local app_uri="$3"
+  local app_metadata_uri="${4:-}" # Defaults to empty if not provided
+  local force_final_registration="${5:-true}" # Passed to the underlying register_app
+
+  if [[ -z "$SCDF_API_URL" ]]; then
+    echo "[ERROR] SCDF_API_URL is not set. Cannot reregister app." >&2
+    return 1
+  fi
+
+  echo "[INFO] Checking registration status for app '$app_type/$app_name'..."
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$SCDF_API_URL/apps/$app_type/$app_name")
+
+  if [[ "$http_code" == "200" ]]; then
+    echo "[INFO] App '$app_type/$app_name' is already registered. Deleting it first..."
+    local delete_http_code
+    delete_http_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE --max-time 10 "$SCDF_API_URL/apps/$app_type/$app_name")
+    if [[ "$delete_http_code" == "200" ]]; then
+      echo "[INFO] App '$app_type/$app_name' deleted successfully."
+    else
+      echo "[WARN] Failed to delete app '$app_type/$app_name'. HTTP status: $delete_http_code. Will attempt registration anyway."
+    fi
+  elif [[ "$http_code" == "404" ]]; then
+    echo "[INFO] App '$app_type/$app_name' not found. Proceeding with new registration."
+  else
+    echo "[WARN] Unexpected HTTP status '$http_code' when checking for app '$app_type/$app_name'. Will attempt registration anyway."
+  fi
+
+  echo "[INFO] Registering app '$app_type/$app_name' with URI '$app_uri'..."
+  # Assumes register_app function is sourced from app_registration.sh
+  # Adjust the call below if the signature of your register_app function is different.
+  # Example signature: register_app "type" "name" "uri" "metadata_uri" "force_flag"
+  register_app "$app_type" "$app_name" "$app_uri" "$app_metadata_uri" "$force_final_registration"
+}
 
 # Source default HDFS stream functions
 echo "[INFO] Sourcing HDFS stream functions..."
@@ -74,7 +127,7 @@ echo "[INFO] Menu functions loaded."
 #   ./create_stream.sh --stream=test-embedproc   # Deploys a test stream for embedding processor verification
 #   ./create_stream.sh --test    # Interactive menu for step-by-step stream management
 #
-# If no arguments are passed, this script will print usage and exit.
+# If no arguments are passed (and not in test mode), this script will print usage and exit.
 # You must specify --stream=streamname (or --test for interactive mode).
 
 #
@@ -148,25 +201,15 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 
-# Source properties at script start for initial setup
-echo "[INFO] Loading properties..."
-source_properties
-echo "[INFO] Properties loaded."
-
-# Check SCDF management endpoint before any actions
-if ! curl -s --max-time 5 "$SCDF_API_URL/management/info" | grep -q '"version"'; then
-  echo "ERROR: Unable to reach SCDF management endpoint at $SCDF_API_URL/management/info. Is SCDF installed and running?"
-  exit 1
-fi
-
-if [[ $# -eq 0 ]]; then
+# Argument check for non-test mode
+if [[ $# -eq 0 && $TEST_MODE -eq 0 ]]; then
   echo "Usage: $0 --stream=STREAMNAME"
   echo "  STREAMNAME: hdfs | s3"
   echo "  Or use --test for interactive menu."
   exit 1
 fi
 
-if [[ "$1" == "--test" ]]; then
+if [[ $TEST_MODE -eq 1 ]]; then
   while true; do
     show_menu
     read -r choice
@@ -179,7 +222,7 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s1 - Create and deploy default HDFS stream ==========" | tee -a "$LOG_FILE"
-        default_hdfs_stream
+        TEST_MODE=1 default_hdfs_stream
         ;;
       s2)
         LOG_DIR="$(dirname "$0")/logs"
@@ -189,7 +232,7 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s2 - Create and deploy default S3 stream ==========" | tee -a "$LOG_FILE"
-        default_s3_stream
+        TEST_MODE=1 default_s3_stream
         ;;
       s3)
         LOG_DIR="$(dirname "$0")/logs"
@@ -198,8 +241,10 @@ if [[ "$1" == "--test" ]]; then
         touch "$LOG_FILE"
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: s3 - Create and deploy test HDFS app ==========" | tee -a "$LOG_FILE"
-        test_hdfs_app
+        echo "========== [$(date)] Option: s3 - Running test_hdfs_app (includes CF auth) ==========" | tee -a "$LOG_FILE"
+        # Source the test_hdfs_app.sh script first
+        source "$(dirname "$0")/functions/test_hdfs_app.sh"
+        TEST_MODE=0 test_hdfs_app # Changed TEST_MODE to 0 for this call
         ;;
       s4)
         LOG_DIR="$(dirname "$0")/logs"
@@ -209,125 +254,36 @@ if [[ "$1" == "--test" ]]; then
         chmod 666 "$LOG_FILE" 2>/dev/null || true
         exec > >(tee -a "$LOG_FILE") 2>&1
         echo "========== [$(date)] Option: s4 - Test HDFS and textProc ==========" | tee -a "$LOG_FILE"
-        test_hdfs_textproc_app
-        ;;
-      1)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 1 - Destroy stream ==========" | tee -a "$LOG_FILE"
-        step_destroy_stream
-        ;;
-      2)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 2 - Unregister processor apps ==========" | tee -a "$LOG_FILE"
-        step_unregister_processor_apps
-        ;;
-      3)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 3 - Register processor apps ==========" | tee -a "$LOG_FILE"
-        step_register_processor_apps
-        ;;
-      4)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 4 - Register default apps ==========" | tee -a "$LOG_FILE"
-        step_register_default_apps
-        ;;
-      5)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 5 - Create stream definition ==========" | tee -a "$LOG_FILE"
-        step_create_stream_definition
-        ;;
-      6)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 6 - Deploy stream ==========" | tee -a "$LOG_FILE"
-        step_deploy_stream
-        ;;
-      7)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 7 - View stream ==========" | tee -a "$LOG_FILE"
-        view_stream
-        ;;
-      8)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 8 - View processor apps ==========" | tee -a "$LOG_FILE"
-        view_processor_apps
-        ;;
-      9)
-        LOG_DIR="$(dirname "$0")/logs"
-        LOG_FILE="$LOG_DIR/create-stream.log"
-        mkdir -p "$LOG_DIR"
-        touch "$LOG_FILE"
-        chmod 666 "$LOG_FILE" 2>/dev/null || true
-        exec > >(tee -a "$LOG_FILE") 2>&1
-        echo "========== [$(date)] Option: 9 - View default apps ==========" | tee -a "$LOG_FILE"
-        view_default_apps
+        TEST_MODE=1 test_hdfs_textproc_app
         ;;
       q|Q)
-        echo "Exiting."
+        echo "Exiting..."
         exit 0
         ;;
       *)
-        echo "Invalid option. Please select 1-9, s1, s2 or q to quit."
+        echo "Invalid option. Please try again."
         ;;
     esac
     echo
     echo "--- Step complete. Return to menu. ---"
   done
-  exit 0
 fi
 
-case "$1" in
-  --stream=hdfs)
-    default_hdfs_stream
-    ;;
-  --stream=s3)
-    default_s3_stream
-    ;;
-  *)
-    echo "ERROR: Unknown stream: $1"
-    echo "Usage: $0 --stream=STREAMNAME"
-    echo "  STREAMNAME: hdfs | s3"
-    echo "  Or use --test for interactive menu."
-    exit 1
-    ;;
-esac
-
+# Non-test mode stream deployment logic
+if [[ $TEST_MODE -eq 0 ]]; then
+    case "$1" in
+      --stream=hdfs)
+        default_hdfs_stream
+        ;;
+      --stream=s3)
+        default_s3_stream
+        ;;
+      *)
+        echo "ERROR: Unknown stream: $1"
+        echo "Usage: $0 --stream=STREAMNAME"
+        echo "  STREAMNAME: hdfs | s3"
+        echo "  Or use --test for interactive menu."
+        exit 1
+        ;;
+    esac
+fi
