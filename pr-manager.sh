@@ -86,7 +86,7 @@ check_git_status() {
     
     # Fetch latest changes
     print_info "Fetching latest changes from remote..."
-    git fetch --all
+    git fetch --all >&2
     
     local current_branch=$(git branch --show-current)
     local default_branch=$(get_default_branch)
@@ -108,13 +108,13 @@ check_git_status() {
         if [[ "$commit_choice" =~ ^[Yy]$ ]]; then
             read -p "Enter commit message: " commit_msg
             if [[ -n "$commit_msg" ]]; then
-                git add .
-                git commit -m "$commit_msg"
+                git add . >&2
+                git commit -m "$commit_msg" >&2
                 print_success "Changes committed."
                 
                 # Push the changes
                 print_info "Pushing committed changes..."
-                git push
+                git push >&2
                 print_success "Changes pushed to remote."
             else
                 print_error "Commit message required."
@@ -148,7 +148,7 @@ create_pull_request() {
     # Check if branch exists on remote and push accordingly
     if ! git ls-remote --exit-code --heads origin "$current_branch" > /dev/null 2>&1; then
         print_info "Pushing current branch to remote for the first time..."
-        git push -u origin "$current_branch"
+        git push -u origin "$current_branch" >&2
     else
         # Check if local branch is ahead of remote
         local local_commit=$(git rev-parse HEAD)
@@ -156,7 +156,7 @@ create_pull_request() {
         
         if [[ "$local_commit" != "$remote_commit" ]]; then
             print_info "Pushing latest changes to remote..."
-            git push
+            git push >&2
         else
             print_info "Branch is already up to date with remote."
         fi
@@ -189,7 +189,7 @@ create_pull_request() {
     # Create PR
     print_info "Creating pull request..."
     local pr_url
-    if pr_url=$(gh pr create --title "$pr_title" --body "$pr_description" --base "$default_branch" --head "$current_branch"); then
+    if pr_url=$(gh pr create --title "$pr_title" --body "$pr_description" --base "$default_branch" --head "$current_branch" 2>&1); then
         print_success "Pull request created successfully!"
         print_info "PR URL: $pr_url"
         return 0
@@ -254,13 +254,13 @@ merge_pull_request() {
     
     # Merge PR
     print_info "Merging pull request..."
-    if gh pr merge "$pr_number" $merge_flag --delete-branch; then
+    if gh pr merge "$pr_number" $merge_flag --delete-branch >&2; then
         print_success "Pull request merged successfully!"
         
         # Update local default branch
         print_info "Updating local $default_branch branch..."
-        git checkout "$default_branch"
-        git pull origin "$default_branch"
+        git checkout "$default_branch" >&2
+        git pull origin "$default_branch" >&2
         
         print_success "Local $default_branch branch updated."
     else
@@ -362,8 +362,8 @@ show_menu() {
                 ;;
             "5")
                 print_info "Switching to $default_branch and pulling latest..."
-                git checkout "$default_branch"
-                git pull origin "$default_branch"
+                git checkout "$default_branch" >&2
+                git pull origin "$default_branch" >&2
                 print_success "Updated to latest $default_branch"
                 current_branch="$default_branch"
                 ;;
