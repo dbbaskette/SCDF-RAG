@@ -19,25 +19,25 @@ else
     NC=''
 fi
 
-# Helper functions
+# Helper functions - all output to stderr so they don't interfere with return values
 print_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
 }
 
 print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 print_header() {
-    echo -e "${PURPLE}[PR-MANAGER]${NC} $1"
+    echo -e "${PURPLE}[PR-MANAGER]${NC} $1" >&2
 }
 
 # Check if required tools are available
@@ -102,8 +102,8 @@ check_git_status() {
     # Check for uncommitted changes
     if ! git diff-index --quiet HEAD --; then
         print_warning "You have uncommitted changes."
-        git status --short
-        echo
+        git status --short >&2
+        echo >&2
         read -p "Do you want to commit and push these changes first? (y/N): " commit_choice
         if [[ "$commit_choice" =~ ^[Yy]$ ]]; then
             read -p "Enter commit message: " commit_msg
@@ -122,7 +122,7 @@ check_git_status() {
             fi
         else
             print_warning "Uncommitted changes will be included when creating PR."
-            echo
+            echo >&2
             read -p "Continue anyway? (y/N): " continue_choice
             if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
                 print_info "Operation cancelled."
@@ -163,14 +163,14 @@ create_pull_request() {
     fi
     
     # Get PR details
-    echo
+    echo >&2
     read -p "Enter PR title [Merge $current_branch to $default_branch]: " pr_title
     if [[ -z "$pr_title" ]]; then
         pr_title="Merge $current_branch to $default_branch"
     fi
     
-    echo
-    echo "Enter PR description (press Enter twice to finish):"
+    echo >&2
+    echo "Enter PR description (press Enter twice to finish):" >&2
     pr_description=""
     while IFS= read -r line; do
         if [[ -z "$line" && -n "$pr_description" ]]; then
@@ -210,9 +210,9 @@ merge_pull_request() {
     local default_branch="$1"
     
     # List open PRs
-    echo
+    echo >&2
     list_pull_requests
-    echo
+    echo >&2
     
     read -p "Enter PR number to merge: " pr_number
     if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
@@ -224,7 +224,7 @@ merge_pull_request() {
     print_info "PR Details:"
     gh pr view "$pr_number"
     
-    echo
+    echo >&2
     read -p "Confirm merge of PR #$pr_number? (y/N): " confirm_merge
     if [[ ! "$confirm_merge" =~ ^[Yy]$ ]]; then
         print_info "Merge cancelled."
@@ -232,11 +232,11 @@ merge_pull_request() {
     fi
     
     # Choose merge strategy
-    echo
-    echo "Merge strategies:"
-    echo "1) Merge commit (default)"
-    echo "2) Squash and merge" 
-    echo "3) Rebase and merge"
+    echo >&2
+    echo "Merge strategies:" >&2
+    echo "1) Merge commit (default)" >&2
+    echo "2) Squash and merge" >&2
+    echo "3) Rebase and merge" >&2
     read -p "Choose merge strategy [1-3, default: 1]: " merge_strategy
     
     local merge_flag=""
@@ -282,20 +282,20 @@ complete_workflow() {
         exit 1
     fi
     
-    echo
+    echo >&2
     read -p "Open PR in browser for review? (Y/n): " open_browser
     if [[ ! "$open_browser" =~ ^[Nn]$ ]]; then
         gh pr view --web
     fi
     
-    echo
+    echo >&2
     print_info "PR created. You can now:"
     print_info "1. Review the PR in your browser"
     print_info "2. Wait for CI/CD checks to pass"
     print_info "3. Get approval from reviewers"
     print_info "4. Come back to merge when ready"
     
-    echo
+    echo >&2
     read -p "Do you want to merge now? (y/N): " merge_now
     if [[ "$merge_now" =~ ^[Yy]$ ]]; then
         # Get the PR number from the most recent PR
@@ -311,18 +311,18 @@ complete_workflow() {
 
 # Show help
 show_help() {
-    echo "Usage: $0 [COMMAND]"
-    echo
-    echo "Pull Request Manager for SCDF-RAG"
-    echo
-    echo "Commands:"
-    echo "  create     Create a new pull request"
-    echo "  list       List existing pull requests"
-    echo "  merge      Merge an existing pull request"
-    echo "  workflow   Complete workflow (create + optional merge)"
-    echo "  help       Show this help message"
-    echo
-    echo "If no command is provided, the interactive menu will be shown."
+    echo "Usage: $0 [COMMAND]" >&2
+    echo >&2
+    echo "Pull Request Manager for SCDF-RAG" >&2
+    echo >&2
+    echo "Commands:" >&2
+    echo "  create     Create a new pull request" >&2
+    echo "  list       List existing pull requests" >&2
+    echo "  merge      Merge an existing pull request" >&2
+    echo "  workflow   Complete workflow (create + optional merge)" >&2
+    echo "  help       Show this help message" >&2
+    echo >&2
+    echo "If no command is provided, the interactive menu will be shown." >&2
 }
 
 # Interactive menu
@@ -331,20 +331,20 @@ show_menu() {
     local default_branch="$2"
     
     while true; do
-        echo
+        echo >&2
         print_header "SCDF-RAG Pull Request Manager"
-        echo
-        echo "Current branch: $current_branch"
-        echo "Default branch: $default_branch"
-        echo
-        echo "Options:"
-        echo "1) Create pull request"
-        echo "2) List existing pull requests"
-        echo "3) Merge pull request"
-        echo "4) Complete workflow (create + optional merge)"
-        echo "5) Switch to default branch and pull latest"
-        echo "q) Quit"
-        echo
+        echo >&2
+        echo "Current branch: $current_branch" >&2
+        echo "Default branch: $default_branch" >&2
+        echo >&2
+        echo "Options:" >&2
+        echo "1) Create pull request" >&2
+        echo "2) List existing pull requests" >&2
+        echo "3) Merge pull request" >&2
+        echo "4) Complete workflow (create + optional merge)" >&2
+        echo "5) Switch to default branch and pull latest" >&2
+        echo "q) Quit" >&2
+        echo >&2
         read -p "Choose an option [1-5, q]: " choice
         
         case "$choice" in
