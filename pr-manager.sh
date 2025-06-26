@@ -40,6 +40,40 @@ print_header() {
     echo -e "${PURPLE}[PR-MANAGER]${NC} $1" >&2
 }
 
+# Run command with timeout
+run_with_timeout() {
+    local timeout_duration="$1"
+    shift
+    local cmd=("$@")
+    
+    print_info "Running command with ${timeout_duration}s timeout: ${cmd[*]}"
+    
+    if command -v timeout &> /dev/null; then
+        timeout "$timeout_duration" "${cmd[@]}"
+    else
+        # macOS doesn't have timeout by default, use built-in method
+        "${cmd[@]}" &
+        local cmd_pid=$!
+        
+        # Wait for command or timeout
+        local count=0
+        while kill -0 "$cmd_pid" 2>/dev/null && [ $count -lt "$timeout_duration" ]; do
+            sleep 1
+            ((count++))
+        done
+        
+        if kill -0 "$cmd_pid" 2>/dev/null; then
+            kill "$cmd_pid" 2>/dev/null
+            wait "$cmd_pid" 2>/dev/null
+            print_error "Command timed out after ${timeout_duration} seconds"
+            return 124
+        else
+            wait "$cmd_pid"
+            return $?
+        fi
+    fi
+}
+
 # Check if required tools are available
 check_requirements() {
     local missing_tools=()
@@ -57,6 +91,26 @@ check_requirements() {
         print_info "Please install the missing tools and try again."
         print_info "Install GitHub CLI: https://cli.github.com/"
         exit 1
+    fi
+    
+    # Check GitHub CLI authentication
+    print_info "Checking GitHub CLI authentication..."
+    if ! gh auth status >&2 2>/dev/null; then
+        print_warning "GitHub CLI is not authenticated."
+        print_info "Please run: gh auth login"
+        echo >&2
+        read -p "Do you want to authenticate now? (y/N): " auth_choice
+        if [[ "$auth_choice" =~ ^[Yy]$ ]]; then
+            gh auth login
+            if ! gh auth status >&2 2>/dev/null; then
+                print_error "Authentication failed. Please try again."
+                exit 1
+            fi
+        else
+            print_warning "Continuing without authentication - some features may not work."
+        fi
+    else
+        print_success "GitHub CLI is authenticated."
     fi
 }
 
@@ -170,31 +224,54 @@ create_pull_request() {
     fi
     
     echo >&2
-    echo "Enter PR description (press Enter twice to finish):" >&2
-    pr_description=""
-    while IFS= read -r line; do
-        if [[ -z "$line" && -n "$pr_description" ]]; then
-            break
-        fi
-        if [[ -n "$pr_description" ]]; then
-            pr_description+="\n"
-        fi
-        pr_description+="$line"
-    done
-    
+    read -p "Enter PR description (or press Enter for default): " pr_description
     if [[ -z "$pr_description" ]]; then
         pr_description="Merging changes from $current_branch to $default_branch"
     fi
     
     # Create PR
     print_info "Creating pull request..."
-    local pr_url
-    if pr_url=$(gh pr create --title "$pr_title" --body "$pr_description" --base "$default_branch" --head "$current_branch" 2>&1); then
+    print_info "Title: $pr_title"
+    print_info "Description: $pr_description"
+    print_info "From: $current_branch → To: $default_branch"
+    echo >&2
+    
+    # Create a temporary file to capture output
+    local temp_output=$(mktemp)
+    local pr_exit_code
+    
+    # Run the command with timeout and capture output
+    print_info "Creating PR (timeout: 60 seconds)..."
+    if gh pr create --title "$pr_title" --body "$pr_description" --base "$default_branch" --head "$current_branch" > "$temp_output" 2>&1; then
+        pr_exit_code=0
+    else
+        pr_exit_code=$?
+    fi
+    
+    local pr_output=$(cat "$temp_output")
+    rm -f "$temp_output"
+    
+    if [[ $pr_exit_code -eq 0 ]]; then
         print_success "Pull request created successfully!"
-        print_info "PR URL: $pr_url"
+        echo "GitHub CLI Output:" >&2
+        echo "$pr_output" >&2
+        
+        # Extract URL from output if possible
+        if [[ "$pr_output" =~ https://github.com/[^[:space:]]+ ]]; then
+            local pr_url="${BASH_REMATCH[0]}"
+            print_info "PR URL: $pr_url"
+        fi
         return 0
     else
-        print_error "Failed to create pull request."
+        print_error "Failed to create pull request (exit code: $pr_exit_code)"
+        echo "GitHub CLI Error Output:" >&2
+        echo "$pr_output" >&2
+        echo >&2
+        print_info "Possible issues:"
+        print_info "1. GitHub CLI not authenticated (run: gh auth login)"
+        print_info "2. Repository not found or no permissions"
+        print_info "3. Pull request already exists"
+        print_info "4. Network connectivity issues"
         return 1
     fi
 }
