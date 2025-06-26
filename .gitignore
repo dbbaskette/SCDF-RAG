@@ -17,8 +17,6 @@ target/
 
 data/*/*
 
-
-
 sourceDocs/
 instructions.txt
 resources/scdf-values.yaml
@@ -26,3 +24,15 @@ resources/scdf-values.yaml
 creds.txt
 .cf_token
 .cf_client_id
+
+# Local configuration
+config.yaml
+
+# Legacy configuration files (now consolidated into config.yaml)
+rag-stream.properties
+rag-stream.deploy
+create_stream.properties
+.scdf_config
+
+# IDE files
+.idea/

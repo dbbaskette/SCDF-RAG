@@ -1,0 +1,56 @@
+# SCDF RAG Stream Configuration
+#
+# This is a template file. Copy this to 'config.yaml' and fill in your specific values.
+# The 'config.yaml' file is ignored by git.
+#
+# Usage:
+# The script loads the 'default' configuration first, then merges the configuration
+# from the environment specified by the '--env' flag (e.g., '--env production').
+# Any setting can also be overridden by an environment variable.
+# For example, `export SCDF_URL=http://my.scdf.server` will override the 'url' setting.
+
+# --- Default Settings ---
+# These settings are used for all environments unless overridden.
+default:
+  scdf:
+    # URL for the Spring Cloud Data Flow server
+    url: "https://dataflow.your-domain.com"
+    # URL for the OAuth2 token endpoint
+    token_url: "https://login.sys.your-domain.com/oauth/token"
+
+  # Application definitions. The script will fetch the latest release from GitHub.
+  apps:
+    hdfsWatcher:
+      type: "source"
+      github_url: "https://github.com/dbbaskette/hdfsWatcher"
+    textProc:
+      type: "processor"
+      github_url: "https://github.com/dbbaskette/textProc"
+    embedProc:
+      type: "processor"
+      github_url: "https://github.com/dbbaskette/embedProc"
+
+  # Stream definition and properties
+  stream:
+    name: "rag-stream"
+    definition: "hdfsWatcher | textProc | embedProc | log"
+    # Deployment properties can be specified here.
+    deployment_properties:
+      deployer.hdfsWatcher.cloudfoundry.disk: 1024M
+      deployer.hdfsWatcher.cloudfoundry.memory: 1024M
+      app.hdfsWatcher.hdfs.user: "your_user"
+      app.hdfsWatcher.hdfs.uri: "hdfs://your-namenode:9000"
+      app.hdfsWatcher.hdfs.remoteDir: "/path/to/your/data"
+
+# --- Production Environment Example ---
+# Settings specific to the production environment. These will override the 'default' settings.
+production:
+  scdf:
+    url: "https://prod-dataflow.your-domain.com"
+    token_url: "https://prod-login.sys.your-domain.com/oauth/token"
+
+  stream:
+    deployment_properties:
+      deployer.hdfsWatcher.cloudfoundry.instances: 2
+      app.hdfsWatcher.hdfs.uri: "hdfs://prod-namenode:9000"
+      app.textProc.model.uri: "http://prod-model-server/api/v1" 

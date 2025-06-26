@@ -1,5 +1,49 @@
 #!/bin/bash
-# rag_streams.sh - Modular SCDF stream management
+# rag_streams.sh - Enhanced modular SCDF stream management
+
+# Import logging functions if they exist
+if declare -f log_info >/dev/null 2>&1; then
+    LOGGING_AVAILABLE=true
+else
+    LOGGING_AVAILABLE=false
+    # Fallback logging functions
+    log_info() { echo "[INFO] $1" >&2; }
+    log_error() { echo "[ERROR] $1" >&2; }
+    log_success() { echo "[SUCCESS] $1" >&2; }
+    log_warn() { echo "[WARN] $1" >&2; }
+    log_debug() { echo "[DEBUG] $1" >&2; }
+fi
+
+# Enhanced curl wrapper for streams
+stream_curl_with_retry() {
+    local url="$1"
+    shift
+    local curl_args=("$@")
+    local context="STREAM_API"
+    local max_retries=3
+    local delay=2
+    
+    for attempt in $(seq 1 $max_retries); do
+        log_debug "Stream API call attempt $attempt: $url" "$context"
+        
+        if curl -s --max-time 30 --connect-timeout 10 --fail-with-body "${curl_args[@]}" "$url"; then
+            log_debug "Stream API call succeeded on attempt $attempt" "$context"
+            return 0
+        fi
+        
+        local exit_code=$?
+        log_warn "Stream API call attempt $attempt failed with exit code $exit_code" "$context"
+        
+        if [[ $attempt -lt $max_retries ]]; then
+            log_info "Retrying in ${delay}s..." "$context"
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+    done
+    
+    log_error "Stream API call failed after $max_retries attempts" "$context"
+    return 1
+}
 
 # Installs Hadoop HDFS into local Kubernetes (calls resources/hdfs.yaml)
 rag_install_hdfs_k8s() {
@@ -29,30 +73,45 @@ rag_install_hdfs_k8s() {
   return 1
 }
 
-# Deletes a stream by name
+# Enhanced stream deletion with error handling
 rag_delete_stream() {
-  local stream_name="$1"
-  local token="$2"
-  local scdf_url="$3"
-  local resp
-  echo "Deleting stream: $stream_name"
-  resp=$(curl -s -k -X DELETE -H "Authorization: Bearer $token" "$scdf_url/streams/definitions/$stream_name")
-  # Parse and show feedback
-  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    local msg
-    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
-    echo "[ERROR] Stream '$stream_name' NOT deleted: $msg"
-    return 1
-  elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
-    # Some SCDFs return a top-level 'message' for success
-    local msg
-    msg=$(echo "$resp" | jq -r '.message')
-    echo "[SUCCESS] $msg"
-    return 0
-  else
-    echo "[SUCCESS] Stream '$stream_name' deleted (or did not exist)."
-    return 0
-  fi
+    local stream_name="$1"
+    local token="$2"
+    local scdf_url="$3"
+    local context="DELETE_STREAM"
+    
+    if [[ -z "$stream_name" || -z "$token" || -z "$scdf_url" ]]; then
+        log_error "Missing required parameters for stream deletion" "$context"
+        return 1
+    fi
+    
+    log_info "Deleting stream: $stream_name" "$context"
+    
+    resp=$(stream_curl_with_retry "$scdf_url/streams/definitions/$stream_name" \
+        -X DELETE \
+        -H "Authorization: Bearer $token" \
+        -H "Accept: application/json")
+    
+    local curl_exit=$?
+    if [[ $curl_exit -ne 0 ]]; then
+        log_error "Network error during stream deletion (exit code: $curl_exit)" "$context"
+        return 1
+    fi
+    
+    # Parse and show feedback
+    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+        log_error "Stream '$stream_name' NOT deleted: $msg" "$context"
+        return 1
+    elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
+        # Some SCDFs return a top-level 'message' for success
+        msg=$(echo "$resp" | jq -r '.message')
+        log_success "$msg" "$context"
+        return 0
+    else
+        log_success "Stream '$stream_name' deleted (or did not exist)" "$context"
+        return 0
+    fi
 }
 
 # Creates a stream definition (does NOT deploy)
@@ -68,7 +127,6 @@ rag_create_stream_definition() {
     return 1
   fi
   echo "Creating stream definition: $stream_name"
-  local resp
   resp=$(curl -s -k -X POST \
     -H "Authorization: Bearer $token" \
     -H "Content-Type: application/x-www-form-urlencoded;charset=UTF-8" \
@@ -76,7 +134,6 @@ rag_create_stream_definition() {
     "$scdf_url/streams/definitions")
   # Parse and show feedback
   if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    local msg
     msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
     echo "[ERROR] Stream definition NOT created: $msg"
     return 1
@@ -91,26 +148,36 @@ rag_deploy_stream() {
   local stream_name="$1"
   local token="$2"
   local scdf_url="$3"
-  local deploy_props_file="rag-stream.deploy"
-  local deploy_props_str
-  local deploy_props_json
-  if [[ -f "$deploy_props_file" ]]; then
-    # Convert key=value lines to comma-separated string
-    deploy_props_str=$(grep -v '^#' "$deploy_props_file" | grep -v '^$' | paste -sd, -)
-    # Use build_json_from_props from utilities.sh
-    if ! type build_json_from_props &>/dev/null; then
-      source "$(dirname "$BASH_SOURCE")/utilities.sh"
-    fi
-    deploy_props_json=$(build_json_from_props "$deploy_props_str")
-    echo "Loaded deploy properties from $deploy_props_file:"
-    echo "$deploy_props_json" | jq -r 'to_entries[] | "  \(.key): \(.value)"'
-
-  else
-    echo "No deploy properties file ($deploy_props_file) found. Proceeding without extra properties."
-    deploy_props_json="{}"
+  
+  # Check if configuration is loaded
+  if [ "$CONFIG_LOADED" != "true" ]; then
+      log_error "Configuration not loaded. Call load_configuration first." "DEPLOY_STREAM"
+      return 1
   fi
+  
   echo "Deploying stream: $stream_name"
-  local resp
+  
+  # Build deployment properties JSON from config
+  local deploy_props_json="{}"
+  
+  # Get all deployment properties from config
+  # This is a simplified approach - in a full implementation, you'd iterate through all config keys
+  local props=$(yq eval '.default.stream.deployment_properties | to_entries | .[] | .key + "=" + .value' "$CONFIG_FILE" 2>/dev/null || echo "")
+  
+  if [ -n "$props" ]; then
+      # Convert properties to JSON using our utility function
+      if ! type build_json_from_props &>/dev/null; then
+          source "$(dirname "$BASH_SOURCE")/utilities.sh"
+      fi
+      local deploy_props_str=$(echo "$props" | paste -sd, -)
+      deploy_props_json=$(build_json_from_props "$deploy_props_str")
+      echo "Using deployment properties from config.yaml:"
+      echo "$deploy_props_json" | jq -r 'to_entries[] | "  \(.key): \(.value)"'
+  else
+      echo "No deployment properties found in config.yaml. Proceeding with defaults."
+      deploy_props_json="{}"
+  fi
+  
   resp=$(curl -s -k -X POST \
     -H "Authorization: Bearer $token" \
     -H "Content-Type: application/json" \
@@ -118,7 +185,6 @@ rag_deploy_stream() {
     "$scdf_url/streams/deployments/$stream_name")
   # Parse and show feedback
   if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    local msg
     msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
     echo "[ERROR] Stream '$stream_name' NOT deployed: $msg"
     return 1
@@ -135,13 +201,11 @@ rag_show_stream_status() {
   local scdf_url="$3"
   echo -e "\n========== SCDF rag-stream Pipeline =========="
   echo "Fetching status for stream: $stream_name"
-  local resp
   resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/deployments/$stream_name")
   if [[ -z "$resp" || "$resp" == "null" ]]; then
     echo "[ERROR] No deployment status found for stream '$stream_name'."
     return 1
   fi
-  local stream_status
   stream_status=$(echo "$resp" | jq -r '.state // .status // "unknown"')
   echo -e "\nStream: $stream_name"
   echo "Status: $stream_status"
@@ -164,7 +228,6 @@ rag_show_stream_status() {
   fi
   # If neither, try runtime/apps for more details
   if [[ $found -eq 0 ]]; then
-    local runtime_resp
     runtime_resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/runtime/apps")
     # App type lookup (portable for Bash v3)
     if echo "$runtime_resp" | jq -e '._embedded.appStatusResourceList' >/dev/null 2>&1; then
