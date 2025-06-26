@@ -104,16 +104,29 @@ check_git_status() {
         print_warning "You have uncommitted changes."
         git status --short
         echo
-        read -p "Do you want to commit these changes first? (y/N): " commit_choice
+        read -p "Do you want to commit and push these changes first? (y/N): " commit_choice
         if [[ "$commit_choice" =~ ^[Yy]$ ]]; then
             read -p "Enter commit message: " commit_msg
             if [[ -n "$commit_msg" ]]; then
                 git add .
                 git commit -m "$commit_msg"
                 print_success "Changes committed."
+                
+                # Push the changes
+                print_info "Pushing committed changes..."
+                git push
+                print_success "Changes pushed to remote."
             else
                 print_error "Commit message required."
                 exit 1
+            fi
+        else
+            print_warning "Uncommitted changes will be included when creating PR."
+            echo
+            read -p "Continue anyway? (y/N): " continue_choice
+            if [[ ! "$continue_choice" =~ ^[Yy]$ ]]; then
+                print_info "Operation cancelled."
+                exit 0
             fi
         fi
     fi
@@ -132,13 +145,21 @@ create_pull_request() {
         exit 1
     fi
     
-    # Push current branch if it doesn't exist on remote
+    # Check if branch exists on remote and push accordingly
     if ! git ls-remote --exit-code --heads origin "$current_branch" > /dev/null 2>&1; then
-        print_info "Pushing current branch to remote..."
+        print_info "Pushing current branch to remote for the first time..."
         git push -u origin "$current_branch"
     else
-        print_info "Pushing latest changes to remote..."
-        git push
+        # Check if local branch is ahead of remote
+        local local_commit=$(git rev-parse HEAD)
+        local remote_commit=$(git rev-parse "origin/$current_branch" 2>/dev/null || echo "")
+        
+        if [[ "$local_commit" != "$remote_commit" ]]; then
+            print_info "Pushing latest changes to remote..."
+            git push
+        else
+            print_info "Branch is already up to date with remote."
+        fi
     fi
     
     # Get PR details
