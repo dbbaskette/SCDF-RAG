@@ -1,6 +1,18 @@
 #!/bin/bash
 # rag-stream.sh - Simple menu-driven SCDF pipeline manager for rag-stream
 
+if [[ "$1" == "--help" || "$1" == "-?" ]]; then
+  echo "Usage: $0 [--menu] [--help|-?]"
+  echo
+  echo "Options:"
+  echo "  --menu     Launch interactive menu for stream management."
+  echo "  --help     Show this help message and exit."
+  echo "  -?         Show this help message and exit."
+  echo
+  echo "If no arguments are given, the script will run the full process (delete, register, create, deploy)."
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd)"
 FUNCS_DIR="$SCRIPT_DIR/functions"
 SCDF_CONFIG_FILE="$SCRIPT_DIR/.scdf_config"
@@ -77,6 +89,9 @@ delete_stream() {
 }
 
 create_stream() {
+  echo "Deleting stream if it exists..."
+  delete_stream
+  sleep 2
   # Use the same stream definition as create_stream_definition
   local stream_def="hdfsWatcher | textProc | embedProc | log"
   rag_create_stream "$STREAM_NAME" "$stream_def" "$token" "$SCDF_CF_URL"
@@ -105,26 +120,28 @@ main_menu() {
     echo
     echo "SCDF rag-stream Pipeline Manager"
     echo "1) View custom apps"
-    echo "2) Register custom apps"
-    echo "3) Unregister custom apps"
-    echo "4) Delete stream"
-    echo "5) Create stream definition only"
-    echo "6) Deploy stream only"
-    echo "7) Create and deploy stream (combined)"
-    echo "8) Full process (register, delete, create+deploy)"
-    echo "9) Show stream status"
+    echo "2) Unregister and register custom apps (refresh)"
+    echo "3) Register custom apps"
+    echo "4) Unregister custom apps"
+    echo "5) Delete stream"
+    echo "6) Create stream definition only"
+    echo "7) Deploy stream only"
+    echo "8) Create and deploy stream (combined)"
+    echo "9) Full process (register, delete, create+deploy)"
+    echo "10) Show stream status"
     echo "q) Quit"
     read -rp "Choose an option: " choice
     case "$choice" in
       1) view_custom_apps "$token" "$SCDF_CF_URL" ;;
-      2) register_custom_apps "$token" "$SCDF_CF_URL" ;;
-      3) unregister_custom_apps "$token" "$SCDF_CF_URL" ;;
-      4) delete_stream ;;
-      5) create_stream_definition ;;
-      6) deploy_stream ;;
-      7) create_stream ;;
-      8) full_process ;;
-      9) rag_show_stream_status "$STREAM_NAME" "$token" "$SCDF_CF_URL" ;;
+      2) unregister_custom_apps "$token" "$SCDF_CF_URL" && register_custom_apps "$token" "$SCDF_CF_URL" ;;
+      3) register_custom_apps "$token" "$SCDF_CF_URL" ;;
+      4) unregister_custom_apps "$token" "$SCDF_CF_URL" ;;
+      5) delete_stream ;;
+      6) create_stream_definition ;;
+      7) deploy_stream ;;
+      8) create_stream ;;
+      9) full_process ;;
+      10) rag_show_stream_status "$STREAM_NAME" "$token" "$SCDF_CF_URL" ;;
       q) echo "Exiting."; exit 0 ;;
       *) echo "Invalid option." ;;
     esac
@@ -146,6 +163,18 @@ deploy_stream() {
 
 get_scdf_url
 get_auth_token
+
+if [[ "$1" == "--help" || "$1" == "-?" ]]; then
+  echo "Usage: $0 [--menu] [--help|-?]"
+  echo
+  echo "Options:"
+  echo "  --menu     Launch interactive menu for stream management."
+  echo "  --help     Show this help message and exit."
+  echo "  -?         Show this help message and exit."
+  echo
+  echo "If no arguments are given, the script will run the full process (delete, register, create, deploy)."
+  exit 0
+fi
 
 if [[ "$1" == "--menu" ]]; then
   main_menu

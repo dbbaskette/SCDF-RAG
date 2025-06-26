@@ -12,9 +12,12 @@
 # ============================================
 
 # HDFS Connection Settings
-app.hdfsWatcher.hdfsUser=hdfs
-app.hdfsWatcher.hdfsUri=hdfs://namenode:8020
-app.hdfsWatcher.hdfsPath=/user/hdfs/input
+app.hdfsWatcher.hdfsWatcher.hdfsUser=hduser
+app.hdfsWatcher.hdfsWatcher.hdfsUri=hdfs://baskettecase.tplinkdns.com:9000
+app.hdfsWatcher.hdfsWatcher.hdfsPath=/user/hduser
+app.hdfsWatcher.hdfsWatcher.webhdfsUri=http://baskettecase.tplinkdns.com:9870
+
+
 
 # Application Settings
 app.hdfsWatcher.hdfsWatcher.pseudoop=true
@@ -33,8 +36,19 @@ app.hdfsWatcher.logging.level.org.springframework.cloud.stream.binder.rabbit=DEB
 app.hdfsWatcher.logging.level.org.springframework.cloud.stream.app.hdfsWatcher.source=DEBUG
 app.hdfsWatcher.logging.level.org.apache.hadoop=DEBUG
 
-# Cloud Foundry Deployment Settings
+app.hdfsWatcher.spring.servlet.multipart.max-file-size=1GB
+app.hdfsWatcher.spring.servlet.multipart.max-request-size=1GB
+app.hdfsWatcher.spring.servlet.multipart.enabled=true
+
+
+# ============================================
+# hdfsWatcher (Source) Deployment Settings
+# ============================================
+deployer.hdfsWatcher.cloudfoundry.environment.JBP_CONFIG_TOMCAT='{tomcat: { max_http_post_size: 1073741824 }}'  # 1GB in bytes
 deployer.hdfsWatcher.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.+} }
+deployer.hdfsWatcher.cloudfoundry.env.CF_ROUTE_MAX_REQUEST_BODY_SIZE=1G
+
+
 
 # ============================================
 # textProc (Processor) Configuration
@@ -52,7 +66,9 @@ app.textProc.server.address=0.0.0.0
 # Stream Bindings
 app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination=hdfswatcher-textproc
 app.textProc.spring.cloud.stream.bindings.textProc-in-0.group=rag-stream
+app.textProc.spring.cloud.stream.bindings.textProc-in-0.content-type=application/json
 app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination=textproc-embedproc
+app.textProc.spring.cloud.stream.bindings.textProc-out-0.content-type=application/octet-stream
 
 # Management Endpoints
 app.textProc.management.server.port=-1
@@ -62,6 +78,7 @@ app.textProc.management.endpoint.health.show-details=always
 app.textProc.management.endpoint.health.show-components=always
 app.textProc.management.endpoint.health.probes.enabled=true
 app.textProc.management.endpoints.web.path-mapping.health=health
+
 
 # Logging Configuration
 app.textProc.logging.level.root=INFO
@@ -87,6 +104,8 @@ deployer.textProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE={ jre: { version: 21.
 # Application Settings
 app.embedProc.spring.profiles.active=scdf
 app.embedProc.spring.cloud.function.definition=embedProc
+app.embedProc.spring.cloud.config.enabled=false
+
 
 # Stream Bindings
 app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.destination=textproc-embedproc

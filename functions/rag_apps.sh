@@ -182,6 +182,6 @@ view_custom_apps() {
   for app in "source/hdfsWatcher" "processor/textProc" "processor/embedProc"; do
     echo
     echo "==== $app ===="
-    curl -s -k -H "Authorization: Bearer $token" "$scdf_url/apps/$app" | jq .
+    curl -s -k -H "Authorization: Bearer $token" "$scdf_url/apps/$app" | jq '{name: .name, type: .type, uri: .uri, version: .version}'
   done
 }

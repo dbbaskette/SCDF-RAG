@@ -1,6 +1,34 @@
 #!/bin/bash
 # rag_streams.sh - Modular SCDF stream management
 
+# Installs Hadoop HDFS into local Kubernetes (calls resources/hdfs.yaml)
+rag_install_hdfs_k8s() {
+  echo "[INFO] Installing Hadoop HDFS into local Kubernetes..."
+  if ! kubectl version --request-timeout=5s >/dev/null 2>&1; then
+    echo "[ERROR] Unable to connect to Kubernetes cluster with kubectl. Is your cluster running and kubeconfig set?"
+    return 1
+  fi
+  if [[ ! -f resources/hdfs.yaml ]]; then
+    echo "[ERROR] resources/hdfs.yaml not found. Cannot deploy HDFS."
+    return 1
+  fi
+  kubectl delete -f resources/hdfs.yaml --ignore-not-found
+  kubectl apply -f resources/hdfs.yaml || { echo "[ERROR] Failed to apply HDFS YAML."; return 1; }
+  echo "[INFO] Waiting for HDFS pods to be ready..."
+  # Wait for all pods with 'hdfs' in the name to be ready (timeout 180s)
+  for i in {1..36}; do
+    ready=$(kubectl get pods -l app=hdfs -o json 2>/dev/null | jq -r '.items[] | select(.status.phase=="Running") | .metadata.name' | wc -l)
+    total=$(kubectl get pods -l app=hdfs -o json 2>/dev/null | jq -r '.items | length')
+    if [[ "$ready" -ge 1 && "$ready" -eq "$total" ]]; then
+      echo "[SUCCESS] HDFS deployed and all pods are running."
+      return 0
+    fi
+    sleep 5
+  done
+  echo "[ERROR] Timed out waiting for HDFS pods to be ready."
+  return 1
+}
+
 # Deletes a stream by name
 rag_delete_stream() {
   local stream_name="$1"
