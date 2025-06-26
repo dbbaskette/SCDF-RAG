@@ -159,22 +159,29 @@ rag_deploy_stream() {
   
   # Build deployment properties JSON from config
   local deploy_props_json="{}"
+  local context="DEPLOY_STREAM"
   
-  # Get all deployment properties from config
-  # This is a simplified approach - in a full implementation, you'd iterate through all config keys
-  local props=$(yq eval '.default.stream.deployment_properties | to_entries | .[] | .key + "=" + .value' "$CONFIG_FILE" 2>/dev/null || echo "")
-  
-  if [ -n "$props" ]; then
+      # Get deployment properties using the specialized function
+    local props
+    if props=$(get_deployment_properties "${CONFIG_ENVIRONMENT:-default}"); then
+      log_info "Using deployment properties from config.yaml:" "$context"
+      
       # Convert properties to JSON using our utility function
       if ! type build_json_from_props &>/dev/null; then
           source "$(dirname "$BASH_SOURCE")/utilities.sh"
       fi
-      local deploy_props_str=$(echo "$props" | paste -sd, -)
+      
+      # Convert newline-separated props to comma-separated
+      local deploy_props_str
+      deploy_props_str=$(echo "$props" | paste -sd, -)
       deploy_props_json=$(build_json_from_props "$deploy_props_str")
-      echo "Using deployment properties from config.yaml:"
-      echo "$deploy_props_json" | jq -r 'to_entries[] | "  \(.key): \(.value)"'
+      
+      # Show the properties being used
+      echo "$props" | while read -r prop; do
+          echo "  $prop"
+      done
   else
-      echo "No deployment properties found in config.yaml. Proceeding with defaults."
+      log_warn "No deployment properties found in config.yaml. Proceeding with defaults." "$context"
       deploy_props_json="{}"
   fi
   

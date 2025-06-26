@@ -45,6 +45,7 @@ load_configuration() {
     fi
 
     CONFIG_LOADED=true
+    export CONFIG_ENVIRONMENT="$env"
     log_success "Configuration loaded and validated successfully" "$context"
     
     if [ "${DEBUG:-false}" = "true" ]; then
@@ -59,9 +60,63 @@ load_configuration() {
 # Usage: get_config "key.subkey"
 get_config() {
     local key="$1"
+    local env="${CONFIG_ENVIRONMENT:-default}"
     local var_name
-    var_name=$(echo "CONFIG_$key" | tr '.' '_')
-    eval "echo \"\${$var_name}\""
+    var_name=$(echo "CONFIG_${env}_$key" | tr '.-' '__')
+    
+    # Return the value of the variable, or empty string if not set
+    eval echo "\${$var_name:-}"
+}
+
+# Gets deployment properties for a stream in the format expected by SCDF
+# Usage: get_deployment_properties <environment>
+get_deployment_properties() {
+    local env="${1:-default}"
+    local context="CONFIG_DEPLOY"
+    
+    log_debug "Extracting deployment properties for environment '$env'" "$context"
+    
+    # Check if the environment and deployment properties section exists
+    if ! yq eval ".${env}.stream.deployment_properties" "$CONFIG_FILE" >/dev/null 2>&1; then
+        log_warn "No deployment properties found for environment '$env'" "$context"
+        return 1
+    fi
+    
+    # Extract deployment properties directly from YAML in SCDF format
+    # This reads the properties as they are defined in YAML (with dots)
+    yq eval ".${env}.stream.deployment_properties | to_entries | .[] | .key + \"=\" + .value" "$CONFIG_FILE"
+}
+
+# Gets app definitions for registration
+# Usage: get_app_definitions <environment>
+get_app_definitions() {
+    local env="${1:-default}"
+    local context="CONFIG_APPS"
+    
+    log_debug "Extracting app definitions for environment '$env'" "$context"
+    
+    # Check if the environment and apps section exists
+    if ! yq eval ".${env}.apps" "$CONFIG_FILE" >/dev/null 2>&1; then
+        log_warn "No app definitions found for environment '$env'" "$context"
+        return 1
+    fi
+    
+    # Get list of app names
+    yq eval ".${env}.apps | keys | .[]" "$CONFIG_FILE"
+}
+
+# Gets app metadata for a specific app
+# Usage: get_app_metadata <app_name> <environment>
+get_app_metadata() {
+    local app_name="$1"
+    local env="${2:-default}"
+    local metadata_key="$3"
+    
+    if [ -n "$metadata_key" ]; then
+        yq eval ".${env}.apps.${app_name}.${metadata_key}" "$CONFIG_FILE"
+    else
+        yq eval ".${env}.apps.${app_name}" "$CONFIG_FILE"
+    fi
 }
 
 # --- Internal Helper Functions ---
@@ -79,15 +134,26 @@ _parse_and_set_vars() {
         return 0
     fi
     
-    # Use yq to output key-value pairs, then read them line by line
-    yq eval ".${section} | .. | select(tag != \"!!map\") | (path | join(\".\")) + \"=\" + ." "$config_file" | while IFS="=" read -r key value; do
+    # Create a temporary file to store the key-value pairs
+    local temp_file
+    temp_file=$(mktemp)
+    
+    # Use yq to output key-value pairs
+    yq eval ".${section} | .. | select(tag != \"!!map\") | (path | join(\".\")) + \"=\" + ." "$config_file" > "$temp_file"
+    
+    # Read the file line by line and set variables
+    while IFS="=" read -r key value; do
         if [ -n "$key" ]; then
             local var_name
-            var_name=$(echo "CONFIG_$key" | tr '.' '_')
+            # Convert key to valid shell variable name: replace dots with underscores, hyphens with underscores
+            var_name=$(echo "CONFIG_$key" | tr '.-' '__')
             export "$var_name=$value"
             log_debug "Set from file: $var_name=$value" "$context"
         fi
-    done
+    done < "$temp_file"
+    
+    # Clean up temporary file
+    rm -f "$temp_file"
 }
 
 # Overrides config values with environment variables.
@@ -106,9 +172,9 @@ _apply_env_overrides() {
         local env_var="${mapping#*:}"
         
         # Check if the environment variable is set
-        if [ -n "${!env_var}" ]; then
+        if [ -n "${!env_var:-}" ]; then
             local var_name
-            var_name=$(echo "CONFIG_$key" | tr '.' '_')
+            var_name=$(echo "CONFIG_$key" | tr '.-' '__')
             local old_value
             old_value=$(get_config "$key")
             local new_value="${!env_var}"

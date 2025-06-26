@@ -611,8 +611,16 @@ main_menu() {
 
 # Initialize and run
 main_init "$@"
-get_scdf_url
-get_auth_token
+
+# Get configuration values
+SCDF_CF_URL=$(get_config "scdf.url")
+SCDF_TOKEN_URL=$(get_config "scdf.token_url")
+STREAM_NAME=$(get_config "stream.name")
+
+# Get authentication token
+if ! get_auth_token; then
+    handle_error $EXIT_AUTH_ERROR "Failed to obtain authentication token" "MAIN"
+fi
 
 # Run the appropriate mode
 if [ "${MENU_MODE:-false}" = "true" ]; then

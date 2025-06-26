@@ -172,16 +172,20 @@ register_custom_apps() {
     local error_count=0
     local skip_count=0
     
-    # Get app names from config (hdfsWatcher, textProc, embedProc)
-    local app_names="hdfsWatcher textProc embedProc"
+    # Get app names dynamically from config
+    local app_names
+    if ! app_names=$(get_app_definitions "${CONFIG_ENVIRONMENT:-default}"); then
+        log_error "Failed to get app definitions from configuration" "$context"
+        return 1
+    fi
     
     for app_name in $app_names; do
         local app_context="${context}_${app_name^^}"
         
         log_info "Processing app: $app_name" "$app_context"
         
-        local app_type=$(get_config "apps.${app_name}.type")
-        local github_url=$(get_config "apps.${app_name}.github_url")
+        local app_type=$(get_app_metadata "$app_name" "${CONFIG_ENVIRONMENT:-default}" "type")
+        local github_url=$(get_app_metadata "$app_name" "${CONFIG_ENVIRONMENT:-default}" "github_url")
         
         if [ -z "$app_type" ] || [ -z "$github_url" ]; then
             log_warn "Missing configuration for $app_name (type: $app_type, github_url: $github_url), skipping" "$app_context"
