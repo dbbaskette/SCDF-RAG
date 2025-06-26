@@ -2,13 +2,22 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m' # No Color
+# Colors for output (only if terminal supports it)
+if [[ -t 1 ]] && command -v tput &> /dev/null && tput colors &> /dev/null && [[ $(tput colors) -ge 8 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    PURPLE='\033[0;35m'
+    NC='\033[0m' # No Color
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    PURPLE=''
+    NC=''
+fi
 
 # Helper functions
 print_info() {
@@ -53,7 +62,7 @@ check_requirements() {
 
 # Get the default branch (main or master)
 get_default_branch() {
-    local default_branch=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+    local default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
     if [[ -z "$default_branch" ]]; then
         # Try to determine from available branches
         if git show-ref --verify --quiet refs/remotes/origin/main; then
@@ -61,11 +70,11 @@ get_default_branch() {
         elif git show-ref --verify --quiet refs/remotes/origin/master; then
             default_branch="master"
         else
-            print_error "Could not determine default branch. Please specify manually."
+            print_error "Could not determine default branch. Please specify manually." >&2
             exit 1
         fi
     fi
-    echo "$default_branch"
+    printf "%s" "$default_branch"
 }
 
 # Check git status and repository
@@ -109,7 +118,8 @@ check_git_status() {
         fi
     fi
     
-    echo "$current_branch:$default_branch"
+    # Return branch info without color codes
+    printf "%s:%s" "$current_branch" "$default_branch"
 }
 
 # Create a pull request
