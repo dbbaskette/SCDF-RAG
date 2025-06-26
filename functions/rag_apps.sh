@@ -29,8 +29,11 @@ app_curl_with_retry() {
     for attempt in $(seq 1 $max_retries); do
         log_debug "API call attempt $attempt: $url" "$context"
         
-        if curl -s --max-time 30 --connect-timeout 10 --fail-with-body "${curl_args[@]}" "$url"; then
+        # Capture response regardless of HTTP status code
+        local response
+        if response=$(curl -s --max-time 30 --connect-timeout 10 "${curl_args[@]}" "$url" 2>/dev/null); then
             log_debug "API call succeeded on attempt $attempt" "$context"
+            echo "$response"
             return 0
         fi
         
@@ -180,7 +183,7 @@ register_custom_apps() {
     fi
     
     for app_name in $app_names; do
-        local app_context="${context}_${app_name^^}"
+        local app_context="${context}_$(echo "$app_name" | tr '[:lower:]' '[:upper:]')"
         
         log_info "Processing app: $app_name" "$app_context"
         
