@@ -55,14 +55,14 @@ register_hdfs_watcher_app() {
     local token="$1"
     local scdf_url="$2"
     local context="HDFS_WATCHER"
-    local uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"
+  local uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"
     
     log_info "Registering hdfsWatcher app" "$context"
     log_debug "URI: $uri" "$context"
     
     resp=$(app_curl_with_retry "$scdf_url/apps/source/hdfsWatcher" \
         -X POST \
-        -H "Authorization: Bearer $token" \
+    -H "Authorization: Bearer $token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "uri=$uri")
     
@@ -72,14 +72,14 @@ register_hdfs_watcher_app() {
         return 1
     fi
     
-    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
         log_error "hdfsWatcher registration failed: $msg" "$context"
-        return 1
-    else
+    return 1
+  else
         log_success "hdfsWatcher registered successfully" "$context"
-        return 0
-    fi
+    return 0
+  fi
 }
 
 register_text_proc_app() {
@@ -179,8 +179,8 @@ register_custom_apps() {
     local app_names
     if ! app_names=$(get_app_definitions "${CONFIG_ENVIRONMENT:-default}"); then
         log_error "Failed to get app definitions from configuration" "$context"
-        return 1
-    fi
+    return 1
+  fi
     
     for app_name in $app_names; do
         local app_context="${context}_$(echo "$app_name" | tr '[:lower:]' '[:upper:]')"
@@ -193,8 +193,8 @@ register_custom_apps() {
         if [ -z "$app_type" ] || [ -z "$github_url" ]; then
             log_warn "Missing configuration for $app_name (type: $app_type, github_url: $github_url), skipping" "$app_context"
             ((skip_count++))
-            continue
-        fi
+      continue
+    fi
         
         # Extract owner/repo from URL with validation
         if echo "$github_url" | grep -E 'github.com/([^/]+)/([^/]+)' >/dev/null; then
@@ -203,7 +203,7 @@ register_custom_apps() {
             log_debug "GitHub repository: $owner/$repo" "$app_context"
             
             # Query latest release from GitHub API with retry
-            local api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
+      local api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
             log_debug "Fetching release info from: $api_url" "$app_context"
             
             if ! release_json=$(app_curl_with_retry "$api_url" -H "Accept: application/vnd.github.v3+json"); then
@@ -215,24 +215,24 @@ register_custom_apps() {
             jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$") and (test("SNAPSHOT") | not)) | .browser_download_url' | head -n1)
             version=$(echo "$release_json" | jq -r '.tag_name // .name // "unknown"')
             
-            # Fallback: allow SNAPSHOT jar if no release jar
+      # Fallback: allow SNAPSHOT jar if no release jar
             if [ -z "$jar_url" ]; then
                 log_debug "No release JAR found, trying SNAPSHOT" "$app_context"
-                jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$")) | .browser_download_url' | head -n1)
-            fi
+        jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$")) | .browser_download_url' | head -n1)
+      fi
             
             if [ -z "$jar_url" ]; then
                 log_error "No JAR asset found for $owner/$repo latest release" "$app_context"
                 ((error_count++))
-                continue
-            fi
+        continue
+      fi
             
             log_info "Found JAR: $jar_url (version: $version)" "$app_context"
             
             # Register the app with retry logic
             resp=$(app_curl_with_retry "$scdf_url/apps/$app_type/$app_name" \
                 -X POST \
-                -H "Authorization: Bearer $token" \
+        -H "Authorization: Bearer $token" \
                 -H "Content-Type: application/x-www-form-urlencoded" \
                 -d "uri=$jar_url")
                 
@@ -243,10 +243,10 @@ register_custom_apps() {
                 continue
             fi
             
-            if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-                msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+      if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
                 if echo "$msg" | grep -q "already registered as"; then
-                    reg_url=$(echo "$msg" | sed -nE "s/.*already registered as (.*)/\1/p")
+          reg_url=$(echo "$msg" | sed -nE "s/.*already registered as (.*)/\1/p")
                     log_info "App already registered at $reg_url" "$app_context"
                     if [ "$jar_url" = "$reg_url" ]; then
                         log_success "App $app_name is up to date" "$app_context"
@@ -258,15 +258,15 @@ register_custom_apps() {
                 else
                     log_error "App registration failed: $msg" "$app_context"
                     ((error_count++))
-                fi
-            else
+        fi
+      else
                 log_success "App $app_name registered successfully" "$app_context"
                 ((success_count++))
-            fi
-        else
+      fi
+    else
             log_error "Invalid GitHub URL format: $github_url" "$app_context"
             ((error_count++))
-        fi
+    fi
     done
     
     # Summary

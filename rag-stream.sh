@@ -380,16 +380,16 @@ get_auth_token() {
     log_info "Authenticating with SCDF..." "$context"
     
     if [ -f "$TOKEN_FILE" ] && [ -s "$TOKEN_FILE" ]; then
-        token=$(cat "$TOKEN_FILE")
+    token=$(cat "$TOKEN_FILE")
         log_debug "Found existing token file" "$context"
         
         if execute_with_retry 2 1 10 curl_with_retry "$SCDF_CF_URL/about" \
             -H "Authorization: Bearer $token" \
             -H "Accept: application/json" \
             -o /dev/null; then
-            export token
+      export token
             log_success "Existing token is valid" "$context"
-            return 0
+      return 0
         else
             log_warn "Existing token is invalid or expired" "$context"
         fi
@@ -398,10 +398,10 @@ get_auth_token() {
     log_info "Please login to Cloud Foundry for SCDF access" "$context"
     if ! get_oauth_token; then
         handle_error $EXIT_AUTH_FAILED "Authentication failed" "$context"
-    fi
+  fi
     
-    token=$(cat "$TOKEN_FILE")
-    export token
+  token=$(cat "$TOKEN_FILE")
+  export token
     log_success "Authentication completed successfully" "$context"
 }
 
@@ -426,8 +426,8 @@ _check_stream_status() {
 
 # Enhanced wait for stream status with timeout
 wait_for_stream_status() {
-    local name="$1"
-    local desired_status="$2"
+  local name="$1"
+  local desired_status="$2"
     local timeout="${3:-$DEFAULT_TIMEOUT}"
     local context="STREAM"
     
@@ -439,13 +439,13 @@ wait_for_stream_status() {
     while [ $elapsed -lt $timeout ]; do
         if _check_stream_status "$name" "$desired_status"; then
             log_success "Stream '$name' reached status: $desired_status" "$context"
-            return 0
-        fi
+      return 0
+    fi
         
         log_debug "Still waiting for stream status (${elapsed}s elapsed)" "$context"
         sleep $interval
         elapsed=$((elapsed + interval))
-    done
+  done
     
     log_error "Stream '$name' did not reach status '$desired_status' within ${timeout}s" "$context"
     return $EXIT_TIMEOUT_ERROR
@@ -471,7 +471,7 @@ create_stream() {
     log_info "Step 1: Deleting existing stream if present" "$context"
     delete_stream || log_warn "Failed to delete existing stream (may not exist)" "$context"
     
-    sleep 2
+  sleep 2
     
     log_info "Step 2: Creating new stream" "$context"
     local stream_def="hdfsWatcher | textProc | embedProc | log"
@@ -486,7 +486,7 @@ create_stream_definition() {
     local context="STREAM"
     log_info "Creating stream definition for '$STREAM_NAME'" "$context"
     
-    local stream_def="hdfsWatcher | textProc | embedProc | log"
+  local stream_def="hdfsWatcher | textProc | embedProc | log"
     if ! rag_create_stream_definition "$STREAM_NAME" "$stream_def" "$token" "$SCDF_CF_URL"; then
         handle_error $EXIT_GENERAL_ERROR "Failed to create stream definition '$STREAM_NAME'" "$context"
     fi
@@ -512,26 +512,26 @@ full_process() {
     
     log_info "[STEP 1] Deleting stream if it exists..." "$context"
     delete_stream || log_warn "Failed to delete existing stream (may not exist)" "$context"
-    sleep 2
+  sleep 2
     
     log_info "[STEP 2] Unregistering custom apps..." "$context"
     if ! unregister_custom_apps "$token" "$SCDF_CF_URL"; then
         log_warn "Failed to unregister some custom apps" "$context"
     fi
-    sleep 2
+  sleep 2
     
     log_info "[STEP 3] Registering custom apps..." "$context"
     if ! register_custom_apps "$token" "$SCDF_CF_URL"; then
         handle_error $EXIT_GENERAL_ERROR "Failed to register custom apps" "$context"
     fi
-    sleep 2
+  sleep 2
     
     log_info "[STEP 4] Creating stream definition..." "$context"
-    create_stream_definition
-    sleep 2
+  create_stream_definition
+  sleep 2
     
     log_info "[STEP 5] Deploying stream..." "$context"
-    deploy_stream
+  deploy_stream
     
     log_success "[COMPLETE] Full process finished successfully" "$context"
 }
@@ -541,7 +541,7 @@ main_menu() {
     local context="MENU"
     log_info "Starting interactive menu" "$context"
     
-    while true; do
+  while true; do
         echo >&2
         echo "SCDF rag-stream Pipeline Manager" >&2
         echo "1) View custom apps" >&2
@@ -558,7 +558,7 @@ main_menu() {
         
         read -p "Choose an option: " choice
         
-        case "$choice" in
+    case "$choice" in
             1)
                 log_info "Viewing custom apps" "$context"
                 view_custom_apps "$token" "$SCDF_CF_URL" || log_error "Failed to view custom apps" "$context"
@@ -605,8 +605,8 @@ main_menu() {
             *)
                 log_error "Invalid option: $choice" "$context"
                 ;;
-        esac
-    done
+    esac
+  done
 }
 
 # Initialize and run
@@ -625,10 +625,10 @@ fi
 # Run the appropriate mode
 if [ "${MENU_MODE:-false}" = "true" ]; then
     log_info "Starting interactive menu mode" "MAIN"
-    main_menu
+  main_menu
 else
     log_info "Starting full process mode" "MAIN"
-    full_process
+  full_process
 fi
 
 log_success "Script execution completed successfully" "MAIN"

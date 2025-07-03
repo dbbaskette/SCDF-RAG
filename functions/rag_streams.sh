@@ -75,9 +75,9 @@ rag_install_hdfs_k8s() {
 
 # Enhanced stream deletion with error handling
 rag_delete_stream() {
-    local stream_name="$1"
-    local token="$2"
-    local scdf_url="$3"
+  local stream_name="$1"
+  local token="$2"
+  local scdf_url="$3"
     local context="DELETE_STREAM"
     
     if [[ -z "$stream_name" || -z "$token" || -z "$scdf_url" ]]; then
@@ -98,20 +98,20 @@ rag_delete_stream() {
         return 1
     fi
     
-    # Parse and show feedback
-    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+  # Parse and show feedback
+  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
         log_error "Stream '$stream_name' NOT deleted: $msg" "$context"
-        return 1
-    elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
-        # Some SCDFs return a top-level 'message' for success
-        msg=$(echo "$resp" | jq -r '.message')
+    return 1
+  elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
+    # Some SCDFs return a top-level 'message' for success
+    msg=$(echo "$resp" | jq -r '.message')
         log_success "$msg" "$context"
-        return 0
-    else
+    return 0
+  else
         log_success "Stream '$stream_name' deleted (or did not exist)" "$context"
-        return 0
-    fi
+    return 0
+  fi
 }
 
 # Creates a stream definition (does NOT deploy)
@@ -161,28 +161,36 @@ rag_deploy_stream() {
   local deploy_props_json="{}"
   local context="DEPLOY_STREAM"
   
-      # Get deployment properties using the specialized function
-    local props
-    if props=$(get_deployment_properties "${CONFIG_ENVIRONMENT:-default}"); then
+  # Get deployment properties using the specialized function
+  local props
+  if props=$(get_deployment_properties "${CONFIG_ENVIRONMENT:-default}"); then
       log_info "Using deployment properties from config.yaml:" "$context"
       
-      # Convert properties to JSON using our utility function
-      if ! type build_json_from_props &>/dev/null; then
-          source "$(dirname "$BASH_SOURCE")/utilities.sh"
-      fi
-      
-      # Convert newline-separated props to comma-separated
-      local deploy_props_str
-      deploy_props_str=$(echo "$props" | paste -sd, -)
-      deploy_props_json=$(build_json_from_props "$deploy_props_str")
-      
       # Show the properties being used
-      echo "$props" | while read -r prop; do
-          echo "  $prop"
+      echo "$props" | while IFS="=" read -r key value; do
+          if [ -n "$key" ]; then
+              echo "  $key=$value"
+          fi
       done
+      
+      # Convert properties to JSON using jq
+      local temp_file
+      temp_file=$(mktemp)
+      echo "$props" > "$temp_file"
+      
+      # Build JSON object using jq
+      deploy_props_json=$(awk -F'=' '{if($1 && $2) printf "%s=%s\n", $1, $2}' "$temp_file" | \
+          jq -R -s 'split("\n") | map(select(length > 0)) | map(split("=")) | map({key: .[0], value: (.[1:] | join("="))}) | from_entries')
+      
+      rm -f "$temp_file"
+      
+      if [ -z "$deploy_props_json" ] || [ "$deploy_props_json" = "null" ]; then
+          log_debug "No valid properties found, using empty deployment config" "$context"
+          deploy_props_json="{}"
+      fi
   else
       log_warn "No deployment properties found in config.yaml. Proceeding with defaults." "$context"
-      deploy_props_json="{}"
+    deploy_props_json="{}"
   fi
   
   resp=$(curl -s -k -X POST \
