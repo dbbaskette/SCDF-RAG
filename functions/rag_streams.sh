@@ -167,9 +167,13 @@ rag_deploy_stream() {
       log_info "Using deployment properties from config.yaml:" "$context"
       
       # Show the properties being used
-      echo "$props" | while IFS="=" read -r key value; do
-          if [ -n "$key" ]; then
-              echo "  $key=$value"
+      echo "$props" | while IFS= read -r line; do
+          if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+              local key="${BASH_REMATCH[1]}"
+              local value="${BASH_REMATCH[2]}"
+              if [ -n "$key" ]; then
+                  echo "  $key=$value"
+              fi
           fi
       done
       
@@ -179,7 +183,8 @@ rag_deploy_stream() {
       echo "$props" > "$temp_file"
       
       # Build JSON object using jq
-      deploy_props_json=$(awk -F'=' '{if($1 && $2) printf "%s=%s\n", $1, $2}' "$temp_file" | \
+      # Use POSIX-compatible awk to split only on the first equals sign
+      deploy_props_json=$(awk '{split($0, arr, "="); key=arr[1]; value=substr($0, index($0,"=")+1); print key "=" value}' "$temp_file" | \
           jq -R -s 'split("\n") | map(select(length > 0)) | map(split("=")) | map({key: .[0], value: (.[1:] | join("="))}) | from_entries')
       
       rm -f "$temp_file"

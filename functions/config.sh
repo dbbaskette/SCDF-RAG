@@ -84,6 +84,7 @@ get_deployment_properties() {
     
     # Extract deployment properties directly from YAML in SCDF format
     # This reads the properties as they are defined in YAML (with dots)
+    # Use yq to output in a format that preserves spaces and special characters
     yq eval ".${env}.stream.deployment_properties | to_entries | .[] | .key + \"=\" + .value" "$CONFIG_FILE"
 }
 
@@ -142,13 +143,17 @@ _parse_and_set_vars() {
     yq eval ".${section} | .. | select(tag != \"!!map\") | (path | join(\".\")) + \"=\" + ." "$config_file" > "$temp_file"
     
     # Read the file line by line and set variables
-    while IFS="=" read -r key value; do
-        if [ -n "$key" ]; then
-            local var_name
-            # Convert key to valid shell variable name: replace dots with underscores, hyphens with underscores
-            var_name=$(echo "CONFIG_$key" | tr '.-' '__')
-            export "$var_name=$value"
-            log_debug "Set from file: $var_name=$value" "$context"
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([^=]+)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local value="${BASH_REMATCH[2]}"
+            if [ -n "$key" ]; then
+                local var_name
+                # Convert key to valid shell variable name: replace dots with underscores, hyphens with underscores
+                var_name=$(echo "CONFIG_$key" | tr '.-' '__')
+                export "$var_name=$value"
+                log_debug "Set from file: $var_name=$value" "$context"
+            fi
         fi
     done < "$temp_file"
     

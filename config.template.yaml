@@ -36,8 +36,13 @@ default:
     definition: "hdfsWatcher | textProc | embedProc | log"
     # Deployment properties can be specified here.
     deployment_properties:
+      # Instance scaling for processors
+      deployer.textProc.count: 1
+      deployer.embedProc.count: 1
+      
+      # hdfsWatcher configuration
       deployer.hdfsWatcher.cloudfoundry.disk: 1024M
-      deployer.hdfsWatcher.cloudfoundry.memory: 1024M
+      deployer.hdfsWatcher.memory: 1024M
       app.hdfsWatcher.hdfs.user: "your_user"
       app.hdfsWatcher.hdfs.uri: "hdfs://your-namenode:9000"
       app.hdfsWatcher.hdfs.remoteDir: "/path/to/your/data"
@@ -51,6 +56,9 @@ production:
 
   stream:
     deployment_properties:
-      deployer.hdfsWatcher.cloudfoundry.instances: 2
+      # Instance scaling for processors (production example)
+      # These override the default values for production environment
+      deployer.textProc.count: 3
+      deployer.embedProc.count: 2
       app.hdfsWatcher.hdfs.uri: "hdfs://prod-namenode:9000"
       app.textProc.model.uri: "http://prod-model-server/api/v1" 

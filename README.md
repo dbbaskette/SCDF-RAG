@@ -20,6 +20,7 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
 - **Robust error handling**: Logs all actions and errors to the `logs/` directory for easy troubleshooting.
 - **Minimal terminal output**: Only step progress, completion, and management URLs are printed to the terminal; all INFO and STATUS details are in the log file.
 - **Fully commented and maintainable**: The scripts are easy to follow and modify.
+- **Instance scaling control**: Configure and control the number of instances for `textProc` and `embedProc` applications using deployment properties in `config.yaml`. Supports environment-specific scaling and dynamic scaling via utility scripts.
 
 ---
 
@@ -43,7 +44,21 @@ This project provides a fully automated shell script to deploy [Spring Cloud Dat
     # Destroy all streams
     ./create_stream.sh --destroy-all
     ```
-3. **Run the SCDF installer**:
+
+4. **Instance Scaling** (Optional):
+    ```sh
+    # Deploy with custom instance counts
+    ./functions/instance_scaling.sh deploy 2 3 production
+    
+    # Scale existing stream
+    ./functions/instance_scaling.sh scale 4 2
+    
+    # Show current deployment properties
+    ./functions/instance_scaling.sh show production
+    ```
+    See [INSTANCE_SCALING.md](INSTANCE_SCALING.md) for detailed documentation.
+
+5. **Run the SCDF installer**:
     ```sh
     ./scdf_install_k8s.sh
     ```
@@ -168,6 +183,7 @@ Each step can be run independently and as many times as needed. This is useful f
 - All INFO and STATUS messages are now logged only; the terminal shows only step progress, completion, and management URLs.
 - All NodePorts and management URLs are dynamically generated and shown at the end of the install.
 - **RabbitMQ NodePort configuration:** The installer now sets RabbitMQ's AMQP and management UI NodePorts from your `scdf_env.properties` file, ensuring your chosen ports are always used.
+- **Instance scaling control:** Added deployment properties to control the number of instances for `textProc` and `embedProc` applications. Supports environment-specific configuration and dynamic scaling via utility scripts.
 
 ---
 
