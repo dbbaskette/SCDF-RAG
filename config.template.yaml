@@ -40,12 +40,17 @@ default:
       deployer.textProc.count: 1
       deployer.embedProc.count: 1
       
-      # hdfsWatcher configuration
+      # === hdfsWatcher (Source) Configuration ===
       deployer.hdfsWatcher.cloudfoundry.disk: 1024M
       deployer.hdfsWatcher.memory: 1024M
       app.hdfsWatcher.hdfs.user: "your_user"
       app.hdfsWatcher.hdfs.uri: "hdfs://your-namenode:9000"
       app.hdfsWatcher.hdfs.remoteDir: "/path/to/your/data"
+      
+      # === embedProc (Processor) Configuration ===
+      # Chunking configuration for text processing
+      app.embedProc.app.chunking.max-words-per-chunk: 1000
+      app.embedProc.app.chunking.overlap-words: 150
 
 # --- Production Environment Example ---
 # Settings specific to the production environment. These will override the 'default' settings.
