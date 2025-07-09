@@ -53,14 +53,10 @@ auth_curl_with_retry() {
 
 get_oauth_token() {
     local context="OAUTH"
-    log_info "=== SCDF Authentication ===" "$context"
-
-  # Check for existing valid token first
-  if [[ -f "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
-    token=$(cat "$TOKEN_FILE")
-    if [[ -n "$token" && -n "$SCDF_CF_URL" ]]; then
-            log_debug "Found existing token, validating..." "$context"
-            
+    
+    if [[ -f "$TOKEN_FILE" && -s "$TOKEN_FILE" ]]; then
+        token=$(cat "$TOKEN_FILE")
+        if [[ -n "$token" && -n "$SCDF_CF_URL" ]]; then
             # Use enhanced curl with retry for token validation
             if auth_curl_with_retry "$SCDF_CF_URL/about" \
                 -H "Authorization: Bearer $token" \
@@ -68,16 +64,16 @@ get_oauth_token() {
                 -w "%{http_code}" \
                 -o /dev/null | grep -q "200"; then
                 
-                log_success "Using existing valid token from $TOKEN_FILE" "$context"
-        export token
-        return 0
+                log_success "Using existing valid token" "$context"
+                export token
+                return 0
             else
                 log_warn "Existing token is invalid or expired" "$context"
-      fi
+            fi
+        fi
     fi
-  fi
 
-    log_info "No valid token found, requesting new authentication" "$context"
+    log_info "Requesting new authentication" "$context"
     
     # Validate required parameters
     local SCDF_CLIENT_ID SCDF_CLIENT_SECRET
@@ -97,7 +93,7 @@ get_oauth_token() {
         fi
     done
     
-  if [[ -z "$SCDF_TOKEN_URL" ]]; then
+    if [[ -z "$SCDF_TOKEN_URL" ]]; then
         while [[ -z "$SCDF_TOKEN_URL" ]]; do
             read -p "SCDF Token URL (e.g. https://login.sys.example.com/oauth/token): " SCDF_TOKEN_URL
             if [[ ! "$SCDF_TOKEN_URL" =~ ^https?://[^[:space:]]+$ ]]; then
@@ -106,42 +102,50 @@ get_oauth_token() {
             fi
         done
     fi
-
-    log_info "Requesting OAuth token from $SCDF_TOKEN_URL" "$context"
-
-    # Request token using client_credentials grant with retry
-    response=$(auth_curl_with_retry "$SCDF_TOKEN_URL" \
-        -X POST \
-        -H "Content-Type: application/x-www-form-urlencoded" \
-        -H "Accept: application/json" \
-    -d "grant_type=client_credentials" \
-    -d "client_id=$SCDF_CLIENT_ID" \
-    -d "client_secret=$SCDF_CLIENT_SECRET")
-
-    local curl_exit=$?
-    if [[ $curl_exit -ne 0 ]]; then
-        log_error "Network error during token request (exit code: $curl_exit)" "$context"
-        return 1
-    fi
-
-    token=$(echo "$response" | jq -r '.access_token // empty')
     
-  if [[ -n "$token" && "$token" != "null" ]]; then
-        # Secure token storage with proper permissions
-    echo "$token" > "$TOKEN_FILE"
-        chmod 600 "$TOKEN_FILE"  # Restrict access to owner only
-        
+    # Save client ID for future use
     echo "$SCDF_CLIENT_ID" > "$CLIENT_ID_FILE"
-        chmod 600 "$CLIENT_ID_FILE"  # Restrict access to owner only
+    
+    # Request token with retry logic
+    local max_retries=3
+    local delay=2
+    
+    for attempt in $(seq 1 $max_retries); do
+        log_debug "Token request attempt $attempt" "$context"
         
-    export token
-        log_success "Authentication successful. Token stored securely." "$context"
-    return 0
-  else
-        error_msg=$(echo "$response" | jq -r '.error_description // .error // "Unknown error"')
-        log_error "Authentication failed: $error_msg" "$context"
-        log_debug "Full response: $response" "$context"
+        if token_response=$(auth_curl_with_retry "$SCDF_TOKEN_URL" \
+            -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "grant_type=client_credentials" \
+            -d "client_id=$SCDF_CLIENT_ID" \
+            -d "client_secret=$SCDF_CLIENT_SECRET"); then
+            
+            # Extract token from response
+            if new_token=$(echo "$token_response" | jq -r '.access_token // empty'); then
+                if [[ -n "$new_token" && "$new_token" != "null" ]]; then
+                    # Save token to file
+                    echo "$new_token" > "$TOKEN_FILE"
+                    chmod 600 "$TOKEN_FILE"
+                    
+                    log_success "Authentication successful" "$context"
+                    export token="$new_token"
+                    return 0
+                else
+                    log_error "No access token in response" "$context"
+                fi
+            else
+                log_error "Failed to parse token response" "$context"
+            fi
+        fi
+        
+        if [ $attempt -lt $max_retries ]; then
+            log_info "Retrying in ${delay}s..." "$context"
+            sleep $delay
+            delay=$((delay * 2))
+        fi
+    done
+    
+    log_error "Authentication failed after $max_retries attempts" "$context"
     return 1
-  fi
 }
 

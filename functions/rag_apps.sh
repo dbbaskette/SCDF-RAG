@@ -163,8 +163,6 @@ register_custom_apps() {
     local scdf_url="$2"
     local context="REGISTER_APPS"
     
-    log_info "Starting custom app registration process" "$context"
-    
     # Check if configuration is loaded
     if [ "$CONFIG_LOADED" != "true" ]; then
         log_error "Configuration not loaded. Call load_configuration first." "$context"
@@ -179,35 +177,29 @@ register_custom_apps() {
     local app_names
     if ! app_names=$(get_app_definitions "${CONFIG_ENVIRONMENT:-default}"); then
         log_error "Failed to get app definitions from configuration" "$context"
-    return 1
-  fi
+        return 1
+    fi
     
     for app_name in $app_names; do
-        local app_context="${context}_$(echo "$app_name" | tr '[:lower:]' '[:upper:]')"
-        
-        log_info "Processing app: $app_name" "$app_context"
-        
         local app_type=$(get_app_metadata "$app_name" "${CONFIG_ENVIRONMENT:-default}" "type")
         local github_url=$(get_app_metadata "$app_name" "${CONFIG_ENVIRONMENT:-default}" "github_url")
         
         if [ -z "$app_type" ] || [ -z "$github_url" ]; then
-            log_warn "Missing configuration for $app_name (type: $app_type, github_url: $github_url), skipping" "$app_context"
+            log_warn "Missing configuration for $app_name, skipping" "$context"
             ((skip_count++))
-      continue
-    fi
+            continue
+        fi
         
         # Extract owner/repo from URL with validation
         if echo "$github_url" | grep -E 'github.com/([^/]+)/([^/]+)' >/dev/null; then
             local owner=$(echo "$github_url" | sed -nE 's|.*github.com/([^/]+)/([^/]+).*|\1|p')
             local repo=$(echo "$github_url" | sed -nE 's|.*github.com/([^/]+)/([^/]+).*|\2|p')
-            log_debug "GitHub repository: $owner/$repo" "$app_context"
             
             # Query latest release from GitHub API with retry
-      local api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
-            log_debug "Fetching release info from: $api_url" "$app_context"
+            local api_url="https://api.github.com/repos/$owner/$repo/releases/latest"
             
             if ! release_json=$(app_curl_with_retry "$api_url" -H "Accept: application/vnd.github.v3+json"); then
-                log_error "Failed to fetch release information for $owner/$repo" "$app_context"
+                log_error "Failed to fetch release information for $owner/$repo" "$context"
                 ((error_count++))
                 continue
             fi
@@ -215,66 +207,62 @@ register_custom_apps() {
             jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$") and (test("SNAPSHOT") | not)) | .browser_download_url' | head -n1)
             version=$(echo "$release_json" | jq -r '.tag_name // .name // "unknown"')
             
-      # Fallback: allow SNAPSHOT jar if no release jar
+            # Fallback: allow SNAPSHOT jar if no release jar
             if [ -z "$jar_url" ]; then
-                log_debug "No release JAR found, trying SNAPSHOT" "$app_context"
-        jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$")) | .browser_download_url' | head -n1)
-      fi
+                jar_url=$(echo "$release_json" | jq -r '.assets[] | select(.name | test("\\.jar$")) | .browser_download_url' | head -n1)
+            fi
             
             if [ -z "$jar_url" ]; then
-                log_error "No JAR asset found for $owner/$repo latest release" "$app_context"
+                log_error "No JAR asset found for $owner/$repo latest release" "$context"
                 ((error_count++))
-        continue
-      fi
-            
-            log_info "Found JAR: $jar_url (version: $version)" "$app_context"
+                continue
+            fi
             
             # Register the app with retry logic
             resp=$(app_curl_with_retry "$scdf_url/apps/$app_type/$app_name" \
                 -X POST \
-        -H "Authorization: Bearer $token" \
+                -H "Authorization: Bearer $token" \
                 -H "Content-Type: application/x-www-form-urlencoded" \
                 -d "uri=$jar_url")
                 
             local curl_exit=$?
             if [ $curl_exit -ne 0 ]; then
-                log_error "Network error during app registration" "$app_context"
+                log_error "Network error during app registration" "$context"
                 ((error_count++))
                 continue
             fi
             
-      if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+            if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+                msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
                 if echo "$msg" | grep -q "already registered as"; then
-          reg_url=$(echo "$msg" | sed -nE "s/.*already registered as (.*)/\1/p")
-                    log_info "App already registered at $reg_url" "$app_context"
+                    reg_url=$(echo "$msg" | sed -nE "s/.*already registered as (.*)/\1/p")
                     if [ "$jar_url" = "$reg_url" ]; then
-                        log_success "App $app_name is up to date" "$app_context"
+                        log_debug "App $app_name is up to date" "$context"
                         ((success_count++))
                     else
-                        log_warn "App $app_name registered with different URL: $reg_url" "$app_context"
+                        log_warn "App $app_name registered with different URL: $reg_url" "$context"
                         ((skip_count++))
                     fi
                 else
-                    log_error "App registration failed: $msg" "$app_context"
+                    log_error "App registration failed: $msg" "$context"
                     ((error_count++))
-        fi
-      else
-                log_success "App $app_name registered successfully" "$app_context"
+                fi
+            else
+                log_success "App $app_name registered successfully" "$context"
                 ((success_count++))
-      fi
-    else
-            log_error "Invalid GitHub URL format: $github_url" "$app_context"
+            fi
+        else
+            log_error "Invalid GitHub URL format: $github_url" "$context"
             ((error_count++))
-    fi
+        fi
     done
     
     # Summary
-    log_info "App registration summary: $success_count successful, $error_count failed, $skip_count skipped" "$context"
-    
     if [ $error_count -gt 0 ]; then
+        log_warn "App registration: $success_count successful, $error_count failed, $skip_count skipped" "$context"
         return 1
     else
+        log_success "App registration: $success_count successful, $skip_count skipped" "$context"
         return 0
     fi
 }

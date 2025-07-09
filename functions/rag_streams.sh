@@ -219,17 +219,17 @@ rag_show_stream_status() {
   local stream_name="$1"
   local token="$2"
   local scdf_url="$3"
-  echo -e "\n========== SCDF rag-stream Pipeline =========="
-  echo "Fetching status for stream: $stream_name"
+  
+  echo "Stream: $stream_name"
   resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/deployments/$stream_name")
   if [[ -z "$resp" || "$resp" == "null" ]]; then
     echo "[ERROR] No deployment status found for stream '$stream_name'."
     return 1
   fi
   stream_status=$(echo "$resp" | jq -r '.state // .status // "unknown"')
-  echo -e "\nStream: $stream_name"
   echo "Status: $stream_status"
-  echo -e "\nApp Statuses:"
+  
+  echo "App Statuses:"
   printf "%-18s %-12s %-10s\n" "App Name" "Type" "Status"
   echo "---------------------------------------------"
   local found=0

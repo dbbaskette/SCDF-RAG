@@ -127,83 +127,71 @@ extract_and_log_api_messages() {
 # Scales the number of instances for a specific app in a stream
 # Usage: scale_stream_instances <stream_name> <app_name> <instance_count> <token> <scdf_url>
 scale_stream_instances() {
-    local stream_name="$1"
-    local app_name="$2"
-    local instance_count="$3"
-    local token="$4"
-    local scdf_url="$5"
-    local context="SCALE_INSTANCES"
-    
-    if [[ -z "$stream_name" || -z "$app_name" || -z "$instance_count" || -z "$token" || -z "$scdf_url" ]]; then
-        log_error "Missing required parameters for scaling" "$context"
-        return 1
-    fi
-    
-    log_info "Scaling $app_name in stream '$stream_name' to $instance_count instances" "$context"
-    
-    # Build the deployment properties JSON with just the instance count
-    local deploy_props_json
-    deploy_props_json=$(jq -n --arg instances "$instance_count" --arg app "$app_name" \
-        "{\"deployer.\$app.count\": \$instances}")
-    
-    resp=$(curl -s -k -X POST \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d "$deploy_props_json" \
-        "$scdf_url/streams/deployments/$stream_name")
-    
-    local curl_exit=$?
-    if [[ $curl_exit -ne 0 ]]; then
-        log_error "Network error during scaling (exit code: $curl_exit)" "$context"
-        return 1
-    fi
-    
-    # Parse and show feedback
-    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
-        log_error "Failed to scale $app_name: $msg" "$context"
-        return 1
-    elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
-        msg=$(echo "$resp" | jq -r '.message')
-        log_success "$msg" "$context"
-        return 0
-    else
-        log_success "Successfully scaled $app_name to $instance_count instances" "$context"
-        return 0
-    fi
+  local stream_name="$1"
+  local app_name="$2"
+  local instance_count="$3"
+  local token="$4"
+  local scdf_url="$5"
+  local context="SCALE"
+  
+  # Get current deployment properties
+  local current_props
+  if ! current_props=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/deployments/$stream_name"); then
+    log_error "Failed to get current deployment properties for stream: $stream_name" "$context"
+    return 1
+  fi
+  
+  # Extract current deployment properties
+  local deploy_props
+  if echo "$current_props" | jq -e '.deploymentProperties' >/dev/null 2>&1; then
+    deploy_props=$(echo "$current_props" | jq -r '.deploymentProperties | to_entries | map("\(.key)=\(.value)") | join("\n")')
+  else
+    deploy_props=""
+  fi
+  
+  # Add or update the instance count property
+  local new_props="$deploy_props"
+  if [[ -n "$deploy_props" ]]; then
+    new_props="$deploy_props"$'\n'"deployer.$app_name.count=$instance_count"
+  else
+    new_props="deployer.$app_name.count=$instance_count"
+  fi
+  
+  # Deploy with updated properties
+  if deploy_stream_with_properties "$stream_name" "$new_props" "$token" "$scdf_url"; then
+    log_success "Successfully scaled $app_name to $instance_count instances" "$context"
+    return 0
+  else
+    log_error "Failed to scale $app_name to $instance_count instances" "$context"
+    return 1
+  fi
 }
 
-# Shows current instance counts for all apps in a stream
-# Usage: show_stream_instance_counts <stream_name> <token> <scdf_url>
-show_stream_instance_counts() {
-    local stream_name="$1"
-    local token="$2"
-    local scdf_url="$3"
-    local context="SHOW_INSTANCES"
-    
-    if [[ -z "$stream_name" || -z "$token" || -z "$scdf_url" ]]; then
-        log_error "Missing required parameters for showing instance counts" "$context"
-        return 1
-    fi
-    
-    log_info "Fetching instance counts for stream: $stream_name" "$context"
-    
-    resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/deployments/$stream_name")
-    
-    if [[ -z "$resp" || "$resp" == "null" ]]; then
-        log_error "No deployment status found for stream '$stream_name'" "$context"
-        return 1
-    fi
-    
-    echo -e "\nInstance counts for stream: $stream_name"
-    echo "=========================================="
-    
-    # Try to extract instance counts from the deployment response
-    if echo "$resp" | jq -e '.deploymentProperties' >/dev/null 2>&1; then
-        echo "$resp" | jq -r '.deploymentProperties | to_entries[] | select(.key | test("deployer.*.count")) | "\(.key): \(.value)"'
-    else
-        log_warn "No deployment properties found in response" "$context"
-    fi
-    
-    echo "=========================================="
+# Gets the current instance counts for all apps in a stream
+# Usage: get_stream_instance_counts <stream_name> <token> <scdf_url>
+get_stream_instance_counts() {
+  local stream_name="$1"
+  local token="$2"
+  local scdf_url="$3"
+  local context="INSTANCE_COUNT"
+  
+  local resp
+  if ! resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/deployments/$stream_name"); then
+    log_error "Failed to get deployment status for stream: $stream_name" "$context"
+    return 1
+  fi
+  
+  # Extract deployment properties
+  local deploy_props
+  if echo "$resp" | jq -e '.deploymentProperties' >/dev/null 2>&1; then
+    deploy_props=$(echo "$resp" | jq -r '.deploymentProperties | to_entries | map("\(.key)=\(.value)") | join("\n")')
+  else
+    deploy_props=""
+  fi
+  
+  # Parse instance counts from deployment properties
+  echo "$deploy_props" | grep "^deployer\..*\.count=" | while IFS='=' read -r key value; do
+    local app_name=$(echo "$key" | sed 's/^deployer\.\(.*\)\.count$/\1/')
+    echo "$app_name: $value"
+  done
 }

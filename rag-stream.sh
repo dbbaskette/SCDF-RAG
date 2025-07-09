@@ -348,40 +348,36 @@ parse_arguments() {
 }
 
 # Main initialization
-main_init() {
-    log_info "=== SCDF RAG Stream Manager Started ===" "INIT"
-    log_info "Script: $0" "INIT"
-    log_info "PID: $$" "INIT"
-    log_info "User: $(whoami)" "INIT"
-    log_info "Working directory: $(pwd)" "INIT"
-    log_info "Log file: $LOG_FILE" "INIT"
-    
+main() {
+    # Parse arguments first
     parse_arguments "$@"
-    validate_required_tools
-    
-    # Source required function libraries with error checking
-    local required_libs="env_setup.sh config.sh auth.sh rag_apps.sh rag_streams.sh"
-    for lib in $required_libs; do
-        local lib_path="$FUNCS_DIR/$lib"
-        if [ ! -f "$lib_path" ]; then
-            handle_error $EXIT_VALIDATION_ERROR "Required library not found: $lib_path" "INIT"
-        fi
-        
-        if ! source "$lib_path"; then
-            handle_error $EXIT_VALIDATION_ERROR "Failed to load library: $lib" "INIT"
-        fi
-    done
     
     # Load configuration
     if ! load_configuration "$CONFIG_FILE" "${SCRIPT_ENV:-default}"; then
-        handle_error $EXIT_VALIDATION_ERROR "Configuration failed to load. Please check config.yaml." "INIT"
+        handle_error $EXIT_VALIDATION_ERROR "Failed to load configuration"
     fi
     
-    # Set global variables from config
-    SCDF_CF_URL=$(get_config "scdf.url")
-    SCDF_TOKEN_URL=$(get_config "scdf.token_url")
-
-    log_success "Initialization completed successfully" "INIT"
+    # Validate tools
+    if ! validate_tools; then
+        handle_error $EXIT_MISSING_TOOLS "Required tools not found"
+    fi
+    
+    # Get authentication token
+    if ! get_oauth_token; then
+        handle_error $EXIT_AUTH_FAILED "Authentication failed"
+    fi
+    
+    # Export token for use in functions
+    export token
+    
+    # Handle different execution modes
+    if [ "${TESTS_MODE:-false}" = "true" ]; then
+        test_menu
+    elif [ "${NO_PROMPT_MODE:-false}" = "true" ]; then
+        full_process
+    else
+        main_menu
+    fi
 }
 
 # Enhanced authentication with retry logic
@@ -540,7 +536,6 @@ get_stream_name() {
 # Test menu for different pipeline configurations
 test_menu() {
     local context="TEST_MENU"
-    log_info "Starting testing menu" "$context"
     
     while true; do
         echo >&2
@@ -555,23 +550,18 @@ test_menu() {
         
         case "$choice" in
             1)
-                log_info "Starting test HDFS process" "$context"
                 test_hdfs_process || log_error "Test HDFS process failed" "$context"
                 ;;
             2)
-                log_info "Starting test TextProc process" "$context"
                 test_textproc_process || log_error "Test TextProc process failed" "$context"
                 ;;
             3)
-                log_info "Starting cleanup of all test streams" "$context"
                 cleanup_all_test_streams || log_error "Test cleanup failed" "$context"
                 ;;
             b|B)
-                log_info "Returning to main menu" "$context"
                 return 0
                 ;;
             q|Q)
-                log_info "Exiting testing menu" "$context"
                 exit $EXIT_SUCCESS
                 ;;
             *)
@@ -583,83 +573,52 @@ test_menu() {
 
 # Test HDFS specific functions
 test_hdfs_process() {
-    local context="TEST_HDFS"
     local test_stream_name="test-hdfs-stream"
-    local test_stream_def="hdfsWatcher | log"
+    local context="TEST_HDFS"
     
-    log_info "Starting test HDFS process for stream '$test_stream_name'" "$context"
-    log_info "This will clean up and restart with a simplified hdfsWatcher -> log pipeline" "$context"
+    log_info "Testing HDFS pipeline: $test_stream_name" "$context"
     
-    log_info "[STEP 1] Deleting test stream if it exists..." "$context"
-    delete_stream "$test_stream_name" || log_warn "Failed to delete existing test stream (may not exist)" "$context"
-    sleep 2
-    
-    log_info "[STEP 2] Unregistering custom apps..." "$context"
-    if ! unregister_custom_apps "$token" "$SCDF_CF_URL"; then
-        log_warn "Failed to unregister some custom apps" "$context"
+    # Cleanup existing test stream
+    if rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
+        log_debug "Cleaned up existing test stream" "$context"
     fi
-    sleep 2
     
-    log_info "[STEP 3] Re-registering hdfsWatcher app..." "$context"
-    # Only register hdfsWatcher for the test, log is built-in
-    if ! register_single_app "hdfsWatcher" "$token" "$SCDF_CF_URL"; then
-        handle_error $EXIT_GENERAL_ERROR "Failed to register hdfsWatcher app" "$context"
+    # Create simple HDFS -> log stream
+    local stream_def="hdfsWatcher --hdfs.namenode=hdfs.scdf.svc.cluster.local:9000 --hdfs.path=/data/input | log"
+    
+    if rag_create_stream "$test_stream_name" "$stream_def" "$token" "$SCDF_CF_URL"; then
+        log_success "Test HDFS stream created and deployed successfully" "$context"
+        log_info "This allows testing HDFS connectivity without text processing components" "$context"
+        return 0
+    else
+        log_error "Failed to create test HDFS stream" "$context"
+        return 1
     fi
-    sleep 2
-    
-    log_info "[STEP 4] Creating test stream definition..." "$context"
-    create_stream_definition "$test_stream_name" "$test_stream_def"
-    sleep 2
-    
-    log_info "[STEP 5] Deploying test stream..." "$context"
-    deploy_stream "$test_stream_name"
-    
-    log_success "[COMPLETE] Test HDFS process finished successfully" "$context"
-    log_info "Test stream '$test_stream_name' uses simplified pipeline: $test_stream_def" "$context"
-    log_info "This allows testing HDFS connectivity without text processing components" "$context"
-    log_info "Monitor the logs to verify HDFS connection and file detection" "$context"
 }
 
-# Test TextProc specific functions
 test_textproc_process() {
-    local context="TEST_TEXTPROC"
     local test_stream_name="test-textproc-stream"
-    local test_stream_def="hdfsWatcher | textProc | log"
+    local context="TEST_TEXTPROC"
     
-    log_info "Starting test TextProc process for stream '$test_stream_name'" "$context"
-    log_info "This will clean up and restart with hdfsWatcher -> textProc -> log pipeline" "$context"
+    log_info "Testing TextProc pipeline: $test_stream_name" "$context"
     
-    log_info "[STEP 1] Deleting test stream if it exists..." "$context"
-    delete_stream "$test_stream_name" || log_warn "Failed to delete existing test stream (may not exist)" "$context"
-    sleep 2
-    
-    log_info "[STEP 2] Unregistering custom apps..." "$context"
-    if ! unregister_custom_apps "$token" "$SCDF_CF_URL"; then
-        log_warn "Failed to unregister some custom apps" "$context"
+    # Cleanup existing test stream
+    if rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
+        log_debug "Cleaned up existing test stream" "$context"
     fi
-    sleep 2
     
-    log_info "[STEP 3] Re-registering required apps..." "$context"
-    # Register hdfsWatcher and textProc, log is built-in
-    if ! register_single_app "hdfsWatcher" "$token" "$SCDF_CF_URL"; then
-        handle_error $EXIT_GENERAL_ERROR "Failed to register hdfsWatcher app" "$context"
+    # Create HDFS -> textProc -> log stream
+    local stream_def="hdfsWatcher --hdfs.namenode=hdfs.scdf.svc.cluster.local:9000 --hdfs.path=/data/input | textProc | log"
+    
+    if rag_create_stream "$test_stream_name" "$stream_def" "$token" "$SCDF_CF_URL"; then
+        log_success "Test TextProc stream created and deployed successfully" "$context"
+        log_info "This allows testing HDFS connectivity and text processing without embedding" "$context"
+        log_info "Monitor the logs to verify file processing and text extraction" "$context"
+        return 0
+    else
+        log_error "Failed to create test TextProc stream" "$context"
+        return 1
     fi
-    if ! register_single_app "textProc" "$token" "$SCDF_CF_URL"; then
-        handle_error $EXIT_GENERAL_ERROR "Failed to register textProc app" "$context"
-    fi
-    sleep 2
-    
-    log_info "[STEP 4] Creating test stream definition..." "$context"
-    create_stream_definition "$test_stream_name" "$test_stream_def"
-    sleep 2
-    
-    log_info "[STEP 5] Deploying test stream..." "$context"
-    deploy_stream "$test_stream_name"
-    
-    log_success "[COMPLETE] Test TextProc process finished successfully" "$context"
-    log_info "Test stream '$test_stream_name' uses pipeline: $test_stream_def" "$context"
-    log_info "This allows testing HDFS connectivity and text processing without embedding" "$context"
-    log_info "Monitor the logs to verify file processing and text extraction" "$context"
 }
 
 # Register a single app by name
@@ -754,38 +713,43 @@ register_single_app() {
 # Enhanced full process with comprehensive error handling
 full_process() {
     local context="PROCESS"
-    log_info "Starting full process for stream '$STREAM_NAME'" "$context"
     
-    log_info "[STEP 1] Deleting stream if it exists..." "$context"
-    delete_stream || log_warn "Failed to delete existing stream (may not exist)" "$context"
-    sleep 2
+    log_info "Running full process for stream '$STREAM_NAME'" "$context"
     
-    log_info "[STEP 2] Unregistering custom apps..." "$context"
-    if ! unregister_custom_apps "$token" "$SCDF_CF_URL"; then
-        log_warn "Failed to unregister some custom apps" "$context"
+    # Step 1: Unregister and register custom apps
+    log_info "Refreshing custom apps..." "$context"
+    if unregister_custom_apps "$token" "$SCDF_CF_URL"; then
+        if register_custom_apps "$token" "$SCDF_CF_URL"; then
+            log_success "Custom apps refreshed successfully" "$context"
+        else
+            log_error "Failed to register custom apps" "$context"
+            return 1
+        fi
+    else
+        log_error "Failed to unregister custom apps" "$context"
+        return 1
     fi
-    sleep 2
     
-    log_info "[STEP 3] Registering custom apps..." "$context"
-    if ! register_custom_apps "$token" "$SCDF_CF_URL"; then
-        handle_error $EXIT_GENERAL_ERROR "Failed to register custom apps" "$context"
+    # Step 2: Delete existing stream
+    log_info "Cleaning up existing stream..." "$context"
+    if rag_delete_stream "$STREAM_NAME" "$token" "$SCDF_CF_URL"; then
+        log_debug "Existing stream cleaned up" "$context"
     fi
-    sleep 2
     
-    log_info "[STEP 4] Creating stream definition..." "$context"
-    create_stream_definition
-    sleep 2
-    
-    log_info "[STEP 5] Deploying stream..." "$context"
-    deploy_stream
-    
-    log_success "[COMPLETE] Full process finished successfully" "$context"
+    # Step 3: Create and deploy new stream
+    log_info "Creating and deploying new stream..." "$context"
+    if create_stream; then
+        log_success "Full process completed successfully" "$context"
+        return 0
+    else
+        log_error "Failed to create and deploy stream" "$context"
+        return 1
+    fi
 }
 
 # Enhanced menu with error handling
 main_menu() {
     local context="MENU"
-    log_info "Starting interactive menu" "$context"
     
     while true; do
         echo >&2
@@ -805,11 +769,9 @@ main_menu() {
         
         case "$choice" in
             1)
-                log_info "Viewing custom apps" "$context"
                 view_custom_apps "$token" "$SCDF_CF_URL" || log_error "Failed to view custom apps" "$context"
                 ;;
             2)
-                log_info "Refreshing custom apps" "$context"
                 if unregister_custom_apps "$token" "$SCDF_CF_URL"; then
                     register_custom_apps "$token" "$SCDF_CF_URL" || log_error "Failed to register custom apps" "$context"
                 else
@@ -832,17 +794,15 @@ main_menu() {
                 full_process || log_error "Full process failed" "$context"
                 ;;
             8)
-                log_info "Showing stream status" "$context"
-                # Show status for available streams
                 echo >&2
-                echo "Available streams to check:" >&2
-                echo "1) Regular RAG stream ($STREAM_NAME)" >&2
-                echo "2) Test HDFS stream (test-hdfs-stream)" >&2
-                echo "3) Test TextProc stream (test-textproc-stream)" >&2
-                echo "4) Show all" >&2
-                read -p "Choose stream to check [1-4, default: 1]: " stream_choice
+                echo "Which stream status would you like to see?" >&2
+                echo "1) Regular RAG stream" >&2
+                echo "2) Test HDFS stream" >&2
+                echo "3) Test TextProc stream" >&2
+                echo "4) All streams" >&2
+                read -p "Choose stream [1-4]: " stream_choice
                 
-                case "${stream_choice:-1}" in
+                case "$stream_choice" in
                     1)
                         rag_show_stream_status "$STREAM_NAME" "$token" "$SCDF_CF_URL" || log_error "Failed to show stream status for $STREAM_NAME" "$context"
                         ;;
@@ -869,11 +829,9 @@ main_menu() {
                 esac
                 ;;
             t|T)
-                log_info "Launching testing menu" "$context"
                 test_menu
                 ;;
             q|Q)
-                log_info "Exiting interactive menu" "$context"
                 exit $EXIT_SUCCESS
                 ;;
             *)
@@ -886,33 +844,21 @@ main_menu() {
 # Cleanup all test streams
 cleanup_all_test_streams() {
     local context="CLEANUP_TESTS"
-    log_info "Starting cleanup of all test streams" "$context"
-    
-    local test_streams="test-hdfs-stream test-textproc-stream"
     local success_count=0
-    local total_count=0
+    local error_count=0
     
-    for stream in $test_streams; do
-        ((total_count++))
-        log_info "Deleting test stream: $stream" "$context"
-        
-        if delete_stream "$stream"; then
-            log_success "Successfully deleted: $stream" "$context"
+    for test_stream in "test-hdfs-stream" "test-textproc-stream"; do
+        if rag_delete_stream "$test_stream" "$token" "$SCDF_CF_URL"; then
+            log_debug "Cleaned up $test_stream" "$context"
             ((success_count++))
         else
-            log_warn "Failed to delete or stream didn't exist: $stream" "$context"
+            log_debug "No existing $test_stream to clean up" "$context"
+            ((success_count++))
         fi
     done
     
-    log_info "Cleanup summary: $success_count/$total_count streams processed" "$context"
-    
-    if [ $success_count -eq $total_count ]; then
-        log_success "All test streams cleaned up successfully" "$context"
-        return 0
-    else
-        log_warn "Some test streams may not have existed or failed to delete" "$context"
-        return 0  # Return success since missing streams is acceptable
-    fi
+    log_success "Test cleanup completed: $success_count streams processed" "$context"
+    return 0
 }
 
 # Initialize and run
