@@ -10,15 +10,11 @@
 # For example, `export SCDF_URL=http://my.scdf.server` will override the 'url' setting.
 
 # --- Default Settings ---
-# These settings are used for all environments unless overridden.
 default:
   scdf:
-    # URL for the Spring Cloud Data Flow server
-    url: "https://dataflow.your-domain.com"
-    # URL for the OAuth2 token endpoint
-    token_url: "https://login.sys.your-domain.com/oauth/token"
+    url: "https://dataflow.your-domain.com"  # SCDF server URL
+    token_url: "https://login.sys.your-domain.com/oauth/token"  # OAuth2 token endpoint
 
-  # Application definitions. The script will fetch the latest release from GitHub.
   apps:
     hdfsWatcher:
       type: "source"
@@ -30,40 +26,112 @@ default:
       type: "processor"
       github_url: "https://github.com/dbbaskette/embedProc"
 
-  # Stream definition and properties
   stream:
     name: "rag-stream"
     definition: "hdfsWatcher | textProc | embedProc | log"
-    # Deployment properties can be specified here.
     deployment_properties:
-      # Instance scaling for processors
+      # === Instance scaling ===
       deployer.textProc.count: 1
       deployer.embedProc.count: 1
-      
+
       # === hdfsWatcher (Source) Configuration ===
-      deployer.hdfsWatcher.cloudfoundry.disk: 1024M
-      deployer.hdfsWatcher.memory: 1024M
-      app.hdfsWatcher.hdfs.user: "your_user"
-      app.hdfsWatcher.hdfs.uri: "hdfs://your-namenode:9000"
-      app.hdfsWatcher.hdfs.remoteDir: "/path/to/your/data"
-      
+      app.hdfsWatcher.hdfsWatcher.hdfsUser: "your_user"
+      app.hdfsWatcher.hdfsWatcher.hdfsUri: "hdfs://your-namenode:9000"
+      app.hdfsWatcher.hdfsWatcher.hdfsPath: "/path/to/your/data"
+      app.hdfsWatcher.hdfsWatcher.webhdfsUri: "http://your-namenode:9870"
+      app.hdfsWatcher.hdfsWatcher.pseudoop: "false"
+      app.hdfsWatcher.hdfsWatcher.local-storage-path: "/tmp/hdfsWatcher"
+      app.hdfsWatcher.hdfsWatcher.pollInterval: "5000"
+      app.hdfsWatcher.spring.profiles.active: "cloud"
+      app.hdfsWatcher.spring.cloud.config.enabled: "false"
+      app.hdfsWatcher.spring.cloud.stream.bindings.output.destination: "hdfswatcher-textproc"
+      # Multipart config
+      app.hdfsWatcher.spring.servlet.multipart.max-file-size: "1GB"
+      app.hdfsWatcher.spring.servlet.multipart.max-request-size: "1GB"
+      app.hdfsWatcher.spring.servlet.multipart.enabled: "true"
+
+      # === textProc (Processor) Configuration ===
+      app.textProc.spring.profiles.active: "scdf"
+      app.textProc.spring.cloud.function.definition: "textProc"
+      app.textProc.spring.cloud.config.enabled: "false"
+      app.textProc.server.port: "8080"
+      app.textProc.server.address: "0.0.0.0"
+      app.textProc.spring.cloud.stream.bindings.textProc-in-0.destination: "hdfswatcher-textproc"
+      app.textProc.spring.cloud.stream.bindings.textProc-in-0.group: "rag-stream"
+      app.textProc.spring.cloud.stream.bindings.textProc-in-0.content-type: "application/json"
+      app.textProc.spring.cloud.stream.bindings.textProc-out-0.destination: "textproc-embedproc"
+      app.textProc.spring.cloud.stream.bindings.textProc-out-0.content-type: "application/json"
+      # HDFS config
+      app.textProc.app.hdfs.base-url: "http://your-namenode:9870/webhdfs/v1"
+      app.textProc.app.hdfs.processed-files-path: "/processed_files"
+      # Management endpoints
+      app.textProc.management.server.port: "-1"
+      app.textProc.management.endpoints.web.base-path: "/actuator"
+      app.textProc.management.endpoints.web.exposure.include: "health,info,env,metrics,httptrace,prometheus"
+      app.textProc.management.endpoint.health.show-details: "always"
+      app.textProc.management.endpoint.health.show-components: "always"
+      app.textProc.management.endpoint.health.probes.enabled: "true"
+      app.textProc.management.endpoints.web.path-mapping.health: "health"
+      # Web config
+      app.textProc.spring.web.resources.static-locations: "classpath:/static/,classpath:/public/"
+      app.textProc.spring.mvc.static-path-pattern: "/**"
+
       # === embedProc (Processor) Configuration ===
-      # Chunking configuration for text processing
-      app.embedProc.app.chunking.max-words-per-chunk: 1000
-      app.embedProc.app.chunking.overlap-words: 150
+      app.embedProc.spring.profiles.active: "cloud"
+      app.embedProc.spring.cloud.function.definition: "embedProc"
+      app.embedProc.spring.cloud.config.enabled: "false"
+      app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.destination: "textproc-embedproc"
+      app.embedProc.spring.cloud.stream.bindings.embedProc-in-0.group: "rag-stream"
+      app.embedProc.spring.cloud.stream.bindings.embedProc-out-0.destination: "embedproc-log"
+      # Chunking config
+      app.embedProc.app.chunking.max-words-per-chunk: 300
+      app.embedProc.app.chunking.overlap-words: 50
+      app.embedProc.app.chunking.min-meaningful-words: 75
+      # Management endpoints
+      app.embedProc.management.endpoints.web.exposure.include: "health"
+      app.embedProc.management.endpoint.health.show-details: "always"
+
+      # === log (Sink) Configuration ===
+      app.log.spring.cloud.stream.bindings.input.destination: "embedproc-log"
+
+      # === Logging Configuration ===
+      app.hdfsWatcher.logging.level.root: "INFO"
+      app.hdfsWatcher.logging.level.org.springframework: "INFO"
+      app.hdfsWatcher.logging.level.org.apache.hadoop: "INFO"
+      app.textProc.logging.level.root: "INFO"
+      app.textProc.logging.level.org.springframework: "INFO"
+      app.textProc.logging.level.com.example: "INFO"
+      app.embedProc.logging.level.root: "INFO"
+      app.embedProc.logging.level.org.springframework: "INFO"
+      app.embedProc.logging.level.cloudfoundry-client: "INFO"
+
+      # === Cloud Foundry Deployment Settings ===
+      deployer.hdfsWatcher.cloudfoundry.disk: "1024M"
+      deployer.hdfsWatcher.memory: "2048M"
+      deployer.hdfsWatcher.cloudfoundry.environment.JBP_CONFIG_TOMCAT: "{tomcat: { max_http_post_size: 1073741824 }}"
+      deployer.hdfsWatcher.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE: "{ jre: { version: 21.+} }"
+      deployer.hdfsWatcher.cloudfoundry.env.CF_ROUTE_MAX_REQUEST_BODY_SIZE: "1G"
+      deployer.textProc.memory: "4096M"
+      deployer.textProc.cloudfoundry.health-check-type: "http"
+      deployer.textProc.cloudfoundry.health-check-http-endpoint: "/actuator/health"
+      deployer.textProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE: "{ jre: { version: 21.+} }"
+      deployer.textProc.cloudfoundry.env.JAVA_OPTS: "-XX:MaxDirectMemorySize=512m -Xmx2g -Xms1g"
+      deployer.embedProc.cloudfoundry.health-check-type: "process"
+      deployer.embedProc.cloudfoundry.startup-timeout: "300"
+      deployer.embedProc.memory: "2048M"
+      deployer.embedProc.cloudfoundry.services: "embed-model,embed-db"
+      deployer.embedProc.cloudfoundry.env.JBP_CONFIG_OPEN_JDK_JRE: "{ jre: { version: 21.+} }"
 
 # --- Production Environment Example ---
-# Settings specific to the production environment. These will override the 'default' settings.
 production:
   scdf:
     url: "https://prod-dataflow.your-domain.com"
     token_url: "https://prod-login.sys.your-domain.com/oauth/token"
-
   stream:
     deployment_properties:
       # Instance scaling for processors (production example)
-      # These override the default values for production environment
       deployer.textProc.count: 3
       deployer.embedProc.count: 2
-      app.hdfsWatcher.hdfs.uri: "hdfs://prod-namenode:9000"
+      # Example overrides for production
+      app.hdfsWatcher.hdfsWatcher.hdfsUri: "hdfs://prod-namenode:9000"
       app.textProc.model.uri: "http://prod-model-server/api/v1" 

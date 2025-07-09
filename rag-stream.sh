@@ -412,7 +412,7 @@ _check_stream_status() {
     log_debug "Current status: $status" "$context"
     
     if [ "$status" = "$desired_status" ]; then
-        return 0
+      return 0
     else
         return 1
     fi
@@ -449,14 +449,13 @@ wait_for_stream_status() {
 delete_stream() {
     local context="STREAM"
     local stream_name="${1:-$STREAM_NAME}"
-    log_info "Deleting stream '$stream_name'" "$context"
     
     if ! rag_delete_stream "$stream_name" "$token" "$SCDF_CF_URL"; then
         log_error "Failed to delete stream '$stream_name'" "$context"
         return $EXIT_GENERAL_ERROR
     fi
     
-    log_success "Stream '$stream_name' deleted successfully" "$context"
+    return 0
 }
 
 create_stream() {
@@ -465,12 +464,12 @@ create_stream() {
     local stream_def="${2:-$(get_stream_definition)}"
     log_info "Creating and deploying stream '$stream_name'" "$context"
     
-    log_info "Step 1: Deleting existing stream if present" "$context"
-    delete_stream "$stream_name" || log_warn "Failed to delete existing stream (may not exist)" "$context"
+    # Clean up existing stream if present
+    delete_stream "$stream_name" || log_debug "No existing stream to clean up" "$context"
     
     sleep 2
     
-    log_info "Step 2: Creating new stream" "$context"
+    log_info "Creating new stream" "$context"
     if ! rag_create_stream "$stream_name" "$stream_def" "$token" "$SCDF_CF_URL"; then
         handle_error $EXIT_GENERAL_ERROR "Failed to create stream '$stream_name'" "$context"
     fi
@@ -525,7 +524,7 @@ get_stream_name() {
 test_menu() {
     local context="TEST_MENU"
     
-    while true; do
+  while true; do
         echo >&2
         echo "SCDF Pipeline Testing Menu" >&2
         echo "1) Test HDFS (cleanup & deploy hdfsWatcher -> log)" >&2
@@ -536,7 +535,7 @@ test_menu() {
         
         read -p "Choose a test option: " choice
         
-        case "$choice" in
+    case "$choice" in
             1)
                 test_hdfs_process || log_error "Test HDFS process failed" "$context"
                 ;;
@@ -555,8 +554,8 @@ test_menu() {
             *)
                 log_error "Invalid option: $choice" "$context"
                 ;;
-        esac
-    done
+    esac
+  done
 }
 
 # Test HDFS specific functions
@@ -567,9 +566,7 @@ test_hdfs_process() {
     log_info "Testing HDFS pipeline: $test_stream_name" "$context"
     
     # Cleanup existing test stream
-    if rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
-        log_debug "Cleaned up existing test stream" "$context"
-    fi
+    rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL" || log_debug "No existing test stream to clean up" "$context"
     
     # Create simple HDFS -> log stream
     local stream_def="hdfsWatcher --hdfs.namenode=hdfs.scdf.svc.cluster.local:9000 --hdfs.path=/data/input | log"
@@ -591,9 +588,7 @@ test_textproc_process() {
     log_info "Testing TextProc pipeline: $test_stream_name" "$context"
     
     # Cleanup existing test stream
-    if rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL"; then
-        log_debug "Cleaned up existing test stream" "$context"
-    fi
+    rag_delete_stream "$test_stream_name" "$token" "$SCDF_CF_URL" || log_debug "No existing test stream to clean up" "$context"
     
     # Create HDFS -> textProc -> log stream
     local stream_def="hdfsWatcher --hdfs.namenode=hdfs.scdf.svc.cluster.local:9000 --hdfs.path=/data/input | textProc | log"
@@ -700,11 +695,14 @@ register_single_app() {
 
 # Enhanced full process with comprehensive error handling
 full_process() {
-    local context="PROCESS"
+    local context="FULL_PROCESS"
     
     log_info "Running full process for stream '$STREAM_NAME'" "$context"
     
-    # Step 1: Unregister and register custom apps
+    # Step 1: Delete existing stream first
+    delete_stream "$STREAM_NAME" || log_debug "No existing stream to clean up" "$context"
+    
+    # Step 2: Unregister and register custom apps
     log_info "Refreshing custom apps..." "$context"
     if unregister_custom_apps "$token" "$SCDF_CF_URL"; then
         if register_custom_apps "$token" "$SCDF_CF_URL"; then
@@ -716,12 +714,6 @@ full_process() {
     else
         log_error "Failed to unregister custom apps" "$context"
         return 1
-    fi
-    
-    # Step 2: Delete existing stream
-    log_info "Cleaning up existing stream..." "$context"
-    if rag_delete_stream "$STREAM_NAME" "$token" "$SCDF_CF_URL"; then
-        log_debug "Existing stream cleaned up" "$context"
     fi
     
     # Step 3: Create and deploy new stream
@@ -832,20 +824,12 @@ main_menu() {
 # Cleanup all test streams
 cleanup_all_test_streams() {
     local context="CLEANUP_TESTS"
-    local success_count=0
-    local error_count=0
     
     for test_stream in "test-hdfs-stream" "test-textproc-stream"; do
-        if rag_delete_stream "$test_stream" "$token" "$SCDF_CF_URL"; then
-            log_debug "Cleaned up $test_stream" "$context"
-            ((success_count++))
-        else
-            log_debug "No existing $test_stream to clean up" "$context"
-            ((success_count++))
-        fi
+        rag_delete_stream "$test_stream" "$token" "$SCDF_CF_URL" || log_debug "No existing $test_stream to clean up" "$context"
     done
     
-    log_success "Test cleanup completed: $success_count streams processed" "$context"
+    log_success "Test cleanup completed" "$context"
     return 0
 }
 

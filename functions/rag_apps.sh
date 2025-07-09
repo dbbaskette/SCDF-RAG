@@ -55,14 +55,15 @@ register_hdfs_watcher_app() {
     local token="$1"
     local scdf_url="$2"
     local context="HDFS_WATCHER"
-  local uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"
+    local uri="https://github.com/dbbaskette/hdfsWatcher/releases/download/v0.2.0/hdfsWatcher-0.2.0.jar"
+    local version="v0.2.0"
     
-    log_info "Registering hdfsWatcher app" "$context"
+    log_info "Registering hdfsWatcher app (version: $version)" "$context"
     log_debug "URI: $uri" "$context"
     
     resp=$(app_curl_with_retry "$scdf_url/apps/source/hdfsWatcher" \
         -X POST \
-    -H "Authorization: Bearer $token" \
+        -H "Authorization: Bearer $token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "uri=$uri")
     
@@ -72,48 +73,60 @@ register_hdfs_watcher_app() {
         return 1
     fi
     
-  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
         log_error "hdfsWatcher registration failed: $msg" "$context"
-    return 1
-  else
-        log_success "hdfsWatcher registered successfully" "$context"
-    return 0
-  fi
+        return 1
+    else
+        log_success "hdfsWatcher registered successfully (version: $version)" "$context"
+        return 0
+    fi
 }
 
 register_text_proc_app() {
-  local token="$1"; local scdf_url="$2"
-  local uri="https://github.com/dbbaskette/textProc/releases/download/v0.0.6/textProc-0.0.6-SNAPSHOT.jar"
-  resp=$(curl -s -k -X POST "$scdf_url/apps/processor/textProc" \
-    -H "Authorization: Bearer $token" \
-    -d "uri=$uri" \
-    -H "Content-Type: application/x-www-form-urlencoded")
-  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
-    echo "[ERROR] textProc registration failed: $msg"
-    return 1
-  else
-    echo "[SUCCESS] textProc registered."
-    return 0
-  fi
+    local token="$1"
+    local scdf_url="$2"
+    local context="TEXT_PROC"
+    local uri="https://github.com/dbbaskette/textProc/releases/download/v0.0.6/textProc-0.0.6-SNAPSHOT.jar"
+    local version="v0.0.6-SNAPSHOT"
+    
+    log_info "Registering textProc app (version: $version)" "$context"
+    
+    resp=$(curl -s -k -X POST "$scdf_url/apps/processor/textProc" \
+        -H "Authorization: Bearer $token" \
+        -d "uri=$uri" \
+        -H "Content-Type: application/x-www-form-urlencoded")
+    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+        echo "[ERROR] textProc registration failed: $msg"
+        return 1
+    else
+        echo "[SUCCESS] textProc registered (version: $version)."
+        return 0
+    fi
 }
 
 register_embed_proc_app() {
-  local token="$1"; local scdf_url="$2"
-  local uri="https://github.com/dbbaskette/embedProc/releases/download/v0.0.3/embedProc-0.0.3.jar"
-  resp=$(curl -s -k -X POST "$scdf_url/apps/processor/embedProc" \
-    -H "Authorization: Bearer $token" \
-    -d "uri=$uri" \
-    -H "Content-Type: application/x-www-form-urlencoded")
-  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
-    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
-    echo "[ERROR] embedProc registration failed: $msg"
-    return 1
-  else
-    echo "[SUCCESS] embedProc registered."
-    return 0
-  fi
+    local token="$1"
+    local scdf_url="$2"
+    local context="EMBED_PROC"
+    local uri="https://github.com/dbbaskette/embedProc/releases/download/v0.0.3/embedProc-0.0.3.jar"
+    local version="v0.0.3"
+    
+    log_info "Registering embedProc app (version: $version)" "$context"
+    
+    resp=$(curl -s -k -X POST "$scdf_url/apps/processor/embedProc" \
+        -H "Authorization: Bearer $token" \
+        -d "uri=$uri" \
+        -H "Content-Type: application/x-www-form-urlencoded")
+    if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+        msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+        echo "[ERROR] embedProc registration failed: $msg"
+        return 1
+    else
+        echo "[SUCCESS] embedProc registered (version: $version)."
+        return 0
+    fi
 }
 
 unregister_hdfs_watcher_app() {
@@ -218,6 +231,8 @@ register_custom_apps() {
                 continue
             fi
             
+            log_info "Registering $app_name (version: $version)" "$context"
+            
             # Register the app with retry logic
             resp=$(app_curl_with_retry "$scdf_url/apps/$app_type/$app_name" \
                 -X POST \
@@ -237,7 +252,7 @@ register_custom_apps() {
                 if echo "$msg" | grep -q "already registered as"; then
                     reg_url=$(echo "$msg" | sed -nE "s/.*already registered as (.*)/\1/p")
                     if [ "$jar_url" = "$reg_url" ]; then
-                        log_debug "App $app_name is up to date" "$context"
+                        log_debug "App $app_name is up to date (version: $version)" "$context"
                         ((success_count++))
                     else
                         log_warn "App $app_name registered with different URL: $reg_url" "$context"
@@ -248,7 +263,7 @@ register_custom_apps() {
                     ((error_count++))
                 fi
             else
-                log_success "App $app_name registered successfully" "$context"
+                log_success "App $app_name registered successfully (version: $version)" "$context"
                 ((success_count++))
             fi
         else
@@ -275,10 +290,31 @@ unregister_custom_apps() {
 }
 
 view_custom_apps() {
-  local token="$1"; local scdf_url="$2"
-  for app in "source/hdfsWatcher" "processor/textProc" "processor/embedProc"; do
+    local token="$1"
+    local scdf_url="$2"
+    
     echo
-    echo "==== $app ===="
-    curl -s -k -H "Authorization: Bearer $token" "$scdf_url/apps/$app" | jq '{name: .name, type: .type, uri: .uri, version: .version}'
-  done
+    echo "Custom Apps Registration Status:"
+    echo "================================"
+    
+    for app in "source/hdfsWatcher" "processor/textProc" "processor/embedProc"; do
+        echo
+        echo "==== $app ===="
+        local app_info
+        app_info=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/apps/$app" | jq '{name: .name, type: .type, uri: .uri, version: .version}')
+        
+        if echo "$app_info" | jq -e '.version' >/dev/null 2>&1; then
+            local name=$(echo "$app_info" | jq -r '.name')
+            local type=$(echo "$app_info" | jq -r '.type')
+            local version=$(echo "$app_info" | jq -r '.version')
+            local uri=$(echo "$app_info" | jq -r '.uri')
+            
+            echo "Name: $name"
+            echo "Type: $type"
+            echo "Version: $version"
+            echo "URI: $uri"
+        else
+            echo "$app_info"
+        fi
+    done
 }

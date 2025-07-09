@@ -78,38 +78,48 @@ rag_delete_stream() {
   local stream_name="$1"
   local token="$2"
   local scdf_url="$3"
-    local context="DELETE_STREAM"
-    
-    if [[ -z "$stream_name" || -z "$token" || -z "$scdf_url" ]]; then
-        log_error "Missing required parameters for stream deletion" "$context"
-        return 1
-    fi
-    
-    log_info "Deleting stream: $stream_name" "$context"
-    
-    resp=$(stream_curl_with_retry "$scdf_url/streams/definitions/$stream_name" \
-        -X DELETE \
-        -H "Authorization: Bearer $token" \
-        -H "Accept: application/json")
-    
-    local curl_exit=$?
-    if [[ $curl_exit -ne 0 ]]; then
-        log_error "Network error during stream deletion (exit code: $curl_exit)" "$context"
-        return 1
-    fi
-    
+  local context="DELETE_STREAM"
+  
+  if [[ -z "$stream_name" || -z "$token" || -z "$scdf_url" ]]; then
+      log_error "Missing required parameters for stream deletion" "$context"
+      return 1
+  fi
+  
+  log_info "Deleting stream: $stream_name" "$context"
+  
+  # First check if the stream exists
+  local check_resp
+  check_resp=$(curl -s -k -H "Authorization: Bearer $token" "$scdf_url/streams/definitions/$stream_name")
+  
+  if [[ -z "$check_resp" || "$check_resp" == "null" ]] || echo "$check_resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+      log_debug "Stream '$stream_name' does not exist, skipping deletion" "$context"
+      return 0
+  fi
+  
+  # Stream exists, proceed with deletion
+  resp=$(curl -s -k -X DELETE \
+      -H "Authorization: Bearer $token" \
+      -H "Accept: application/json" \
+      "$scdf_url/streams/definitions/$stream_name")
+  
+  local curl_exit=$?
+  if [[ $curl_exit -ne 0 ]]; then
+      log_error "Network error during stream deletion (exit code: $curl_exit)" "$context"
+      return 1
+  fi
+  
   # Parse and show feedback
   if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
     msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
-        log_error "Stream '$stream_name' NOT deleted: $msg" "$context"
+      log_error "Stream '$stream_name' NOT deleted: $msg" "$context"
     return 1
   elif echo "$resp" | jq -e '.message' >/dev/null 2>&1 && [[ $(echo "$resp" | jq -r '.message') != "null" ]]; then
     # Some SCDFs return a top-level 'message' for success
     msg=$(echo "$resp" | jq -r '.message')
-        log_success "$msg" "$context"
+      log_success "$msg" "$context"
     return 0
   else
-        log_success "Stream '$stream_name' deleted (or did not exist)" "$context"
+      log_success "Stream '$stream_name' deleted successfully" "$context"
     return 0
   fi
 }
