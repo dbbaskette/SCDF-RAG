@@ -349,6 +349,14 @@ parse_arguments() {
 
 # Main initialization
 main() {
+    # Source required function libraries
+    source "$FUNCS_DIR/env_setup.sh"
+    source "$FUNCS_DIR/config.sh"
+    source "$FUNCS_DIR/auth.sh"
+    source "$FUNCS_DIR/rag_apps.sh"
+    source "$FUNCS_DIR/rag_streams.sh"
+    source "$FUNCS_DIR/utilities.sh"
+    
     # Parse arguments first
     parse_arguments "$@"
     
@@ -357,8 +365,13 @@ main() {
         handle_error $EXIT_VALIDATION_ERROR "Failed to load configuration"
     fi
     
+    # Set global variables from configuration
+    SCDF_CF_URL=$(get_config "scdf.url")
+    SCDF_TOKEN_URL=$(get_config "scdf.token_url")
+    STREAM_NAME=$(get_config "stream.name")
+    
     # Validate tools
-    if ! validate_tools; then
+    if ! validate_required_tools; then
         handle_error $EXIT_MISSING_TOOLS "Required tools not found"
     fi
     
@@ -382,33 +395,8 @@ main() {
 
 # Enhanced authentication with retry logic
 get_auth_token() {
-    local context="AUTH"
-    log_info "Authenticating with SCDF..." "$context"
-    
-    if [ -f "$TOKEN_FILE" ] && [ -s "$TOKEN_FILE" ]; then
-    token=$(cat "$TOKEN_FILE")
-        log_debug "Found existing token file" "$context"
-        
-        if execute_with_retry 2 1 10 curl_with_retry "$SCDF_CF_URL/about" \
-            -H "Authorization: Bearer $token" \
-            -H "Accept: application/json" \
-            -o /dev/null; then
-      export token
-            log_success "Existing token is valid" "$context"
-      return 0
-        else
-            log_warn "Existing token is invalid or expired" "$context"
-        fi
-    fi
-    
-    log_info "Please login to Cloud Foundry for SCDF access" "$context"
-    if ! get_oauth_token; then
-        handle_error $EXIT_AUTH_FAILED "Authentication failed" "$context"
-  fi
-    
-  token=$(cat "$TOKEN_FILE")
-  export token
-    log_success "Authentication completed successfully" "$context"
+    # This function is now redundant - we call get_oauth_token directly
+    get_oauth_token
 }
 
 # Helper function for checking stream status
@@ -862,28 +850,4 @@ cleanup_all_test_streams() {
 }
 
 # Initialize and run
-main_init "$@"
-
-# Get configuration values
-SCDF_CF_URL=$(get_config "scdf.url")
-SCDF_TOKEN_URL=$(get_config "scdf.token_url")
-STREAM_NAME=$(get_config "stream.name")
-
-# Get authentication token
-if ! get_auth_token; then
-    handle_error $EXIT_AUTH_FAILED "Failed to obtain authentication token" "MAIN"
-fi
-
-# Run the appropriate mode
-if [ "${TESTS_MODE:-false}" = "true" ]; then
-    log_info "Starting testing menu mode" "MAIN"
-    test_menu
-elif [ "${NO_PROMPT_MODE:-false}" = "true" ]; then
-    log_info "Starting full process mode" "MAIN"
-    full_process
-else
-    log_info "Starting interactive menu mode (default)" "MAIN"
-    main_menu
-fi
-
-log_success "Script execution completed successfully" "MAIN"
+main "$@"

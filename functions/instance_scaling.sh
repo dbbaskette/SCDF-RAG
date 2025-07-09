@@ -36,7 +36,7 @@ deploy_with_custom_instances() {
     
     # Get authentication token
     local token
-    if ! token=$(get_auth_token); then
+    if ! token=$(get_oauth_token); then
         log_error "Failed to get authentication token" "$context"
         return 1
     fi
@@ -86,7 +86,7 @@ scale_existing_stream() {
     
     # Get authentication token
     local token
-    if ! token=$(get_auth_token); then
+    if ! token=$(get_oauth_token); then
         log_error "Failed to get authentication token" "$context"
         return 1
     fi
@@ -112,7 +112,7 @@ scale_existing_stream() {
     fi
     
     # Show current instance counts
-    show_stream_instance_counts "$stream_name" "$token" "$scdf_url"
+    get_stream_instance_counts "$stream_name" "$token" "$scdf_url"
 }
 
 # Example function to show current deployment properties

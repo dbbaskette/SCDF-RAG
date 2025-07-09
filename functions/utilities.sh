@@ -124,6 +124,42 @@ extract_and_log_api_messages() {
   done
 }
 
+# Deploy a stream with custom properties
+# Usage: deploy_stream_with_properties <stream_name> <properties_string> <token> <scdf_url>
+deploy_stream_with_properties() {
+  local stream_name="$1"
+  local properties_string="$2"
+  local token="$3"
+  local scdf_url="$4"
+  local context="DEPLOY_WITH_PROPS"
+  
+  # Convert properties string to JSON
+  local deploy_props_json
+  if ! deploy_props_json=$(build_json_from_props "$properties_string"); then
+    log_error "Failed to convert properties to JSON" "$context"
+    return 1
+  fi
+  
+  # Deploy the stream with properties
+  local resp
+  resp=$(curl -s -k -X POST \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" \
+    -d "$deploy_props_json" \
+    "$scdf_url/streams/deployments/$stream_name")
+  
+  # Parse and show feedback
+  if echo "$resp" | jq -e '._embedded.errors' >/dev/null 2>&1; then
+    local msg
+    msg=$(echo "$resp" | jq -r '._embedded.errors[]?.message')
+    log_error "Stream '$stream_name' NOT deployed: $msg" "$context"
+    return 1
+  else
+    log_success "Stream '$stream_name' deployed with custom properties" "$context"
+    return 0
+  fi
+}
+
 # Scales the number of instances for a specific app in a stream
 # Usage: scale_stream_instances <stream_name> <app_name> <instance_count> <token> <scdf_url>
 scale_stream_instances() {
