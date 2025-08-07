@@ -24,6 +24,7 @@ resources/scdf-values.yaml
 creds.txt
 .cf_token
 .cf_client_id
+.cf.secret
 
 # Local configuration
 config.yaml
