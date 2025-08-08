@@ -1,20 +1,34 @@
-# SCDF-RAG: Spring Cloud Data Flow RAG Pipeline Manager
+<div align="center">
+  <img src="images/logo.png" alt="SCDF-RAG" width="420"/>
+  
+  <h2>SCDF‑RAG • Spring Cloud Data Flow RAG Pipeline Manager</h2>
 
-A comprehensive toolkit for managing RAG (Retrieval-Augmented Generation) pipelines using Spring Cloud Data Flow. The core component is `rag-stream.sh`, which provides an interactive interface for deploying, managing, and monitoring RAG processing streams.
+  <p>
+    <img alt="Version" src="https://img.shields.io/badge/version-3.0.2-1f6feb?style=for-the-badge&labelColor=0d1117"/>
+    <img alt="Shell" src="https://img.shields.io/badge/shell-bash-3fb950?style=for-the-badge&labelColor=0d1117&logo=gnubash&logoColor=white"/>
+    <img alt="OS" src="https://img.shields.io/badge/macOS%20%7C%20Linux-supported-d29922?style=for-the-badge&labelColor=0d1117&logo=apple&logoColor=white"/>
+    <img alt="SCDF" src="https://img.shields.io/badge/Spring%20Cloud%20Data%20Flow-✓-16a34a?style=for-the-badge&labelColor=0d1117&logo=spring&logoColor=white"/>
+    <img alt="License" src="https://img.shields.io/badge/License-MIT-8b949e?style=for-the-badge&labelColor=0d1117"/>
+  </p>
+  
+  <p><b>Central Command:</b> <code>rag-stream.sh</code> — a colorful, interactive CLI to build, register, deploy, monitor, and test your RAG streams.</p>
+</div>
 
-<p align="center">
-  <img src="images/logo.png" alt="SCDF-RAG Logo" width="300"/>
-</p>
+---
+
+### ✨ What is SCDF‑RAG?
+
+SCDF‑RAG is a focused toolkit to orchestrate Retrieval‑Augmented Generation pipelines on Spring Cloud Data Flow (SCDF). While there are legacy helpers in this repo, the star of the show is the streamlined, production‑minded <code>rag-stream.sh</code>.
 
 ## 🎯 Core Features
 
-- **Interactive Stream Management**: Deploy, monitor, and manage RAG pipelines through an intuitive menu system
-- **Multi-Environment Support**: Configure different settings for development, staging, and production
-- **Automatic App Registration**: Dynamically fetch and register the latest versions of custom processors from GitHub
-- **Version-Aware Operations**: Display app versions during registration and deployment
-- **Comprehensive Logging**: Detailed logging with context-aware error handling
-- **Token Caching**: Persistent authentication with automatic token refresh
-- **Instance Scaling**: Configure and scale processor instances for optimal performance
+- **Interactive Stream Management**: Deploy, monitor, and manage RAG pipelines via a guided menu
+- **Multi‑Environment Config**: Switch contexts with `--env` (e.g., default, staging, production)
+- **Automatic App Registration**: Pull latest app releases from GitHub and register with SCDF
+- **Version‑Aware Operations**: Surface versions at registration and deployment time
+- **Comprehensive Logging**: Colorful console output + structured file logs
+- **Token Caching & Refresh**: OAuth2 token reuse with auto‑refresh
+- **Instance Scaling**: Control processor parallelism with deployment properties
 
 ## 🚀 Quick Start
 
@@ -48,19 +62,33 @@ sudo apt-get install kubectl helm yq jq curl
    ./rag-stream.sh
    ```
 
-## 📋 Main Menu Options
+## 📋 Main Menu Options (rag‑stream)
 
-The `rag-stream.sh` script provides an interactive menu with these options:
+The `rag-stream.sh` interactive menu includes:
 
-- **View custom apps** - Display registered apps with versions
-- **Unregister and register custom apps** - Refresh app registrations
-- **Delete stream** - Remove existing streams
-- **Create stream definition only** - Define stream without deployment
-- **Deploy stream only** - Deploy existing stream definition
-- **Create and deploy stream** - Complete stream lifecycle
-- **Full process** - Complete refresh (delete → register apps → create → deploy)
-- **Show stream status** - Monitor stream and app health
-- **Launch testing menu** - Test different pipeline configurations
+- **View custom apps** — Display registered apps with versions
+- **Unregister and register custom apps** — Refresh app registrations
+- **Delete stream** — Remove existing streams
+- **Create stream definition only** — Define without deployment
+- **Deploy stream only** — Deploy an existing definition
+- **Create and deploy stream** — End‑to‑end lifecycle
+- **Full process** — Clean and rebuild (delete → register → create → deploy)
+- **Show stream status** — Stream and app health
+- **Launch testing menu** — Purpose‑built HDFS/TextProc tests
+
+```text
+SCDF rag-stream Pipeline Manager
+1) View custom apps
+2) Unregister and register custom apps (refresh)
+3) Delete stream
+4) Create stream definition only
+5) Deploy stream only
+6) Create and deploy stream (combined)
+7) Full process (register, delete, create+deploy)
+8) Show stream status
+t) Launch testing menu
+q) Quit
+```
 
 ## 🔧 Configuration
 
@@ -120,8 +148,33 @@ default:
 
 ### Pipeline Flow
 
+```mermaid
+flowchart LR
+  subgraph Input
+    A[HDFS Documents]
+  end
+  A --> B[hdfsWatcher\nSource]
+  B --> C[textProc\nProcessor]
+  C --> D[embedProc\nProcessor]
+  D --> E[log\nSink]
 ```
-HDFS Documents → hdfsWatcher → textProc → embedProc → log
+
+### Lifecycle (at a glance)
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as You
+  participant R as rag-stream.sh
+  participant SCDF as SCDF Server
+  U->>R: Choose "Full process"
+  R->>SCDF: Delete stream (if exists)
+  R->>SCDF: Unregister custom apps
+  R->>SCDF: Register custom apps (from GitHub releases)
+  R->>SCDF: Create stream definition
+  R->>SCDF: Deploy stream
+  SCDF-->>R: Status + health
+  R-->>U: Colorful status + logs
 ```
 
 ## 🛠️ Advanced Usage
@@ -202,11 +255,11 @@ Enable detailed logging:
 
 ## 🔐 Authentication
 
-The system supports OAuth2 token-based authentication:
+The system supports OAuth2 token‑based authentication:
 
-1. **Token Caching**: Tokens are stored in `.cf_token` and reused
-2. **Automatic Refresh**: Invalid tokens trigger new authentication
-3. **Secure Storage**: Token files have restricted permissions
+1. **Token caching**: Tokens are stored in `.cf_token` and reused
+2. **Auto‑refresh**: Invalid tokens trigger new authentication
+3. **Secure storage**: Token files have restricted permissions
 
 ## 🏗️ Architecture
 
@@ -233,14 +286,21 @@ SCDF-RAG/
 - **App Registration**: Dynamic GitHub release fetching and registration
 - **Stream Operations**: Create, deploy, monitor, and manage streams
 - **Error Handling**: Comprehensive error handling with retry logic
-- **Logging**: Context-aware logging with file and console output
+- **Logging**: Context‑aware logging with file and console output
+
+## 🧭 Why rag‑stream.sh?
+
+- **Single entrypoint**: One script to register apps, create definitions, deploy, and monitor
+- **Production‑friendly**: Opinionated defaults, retries, timeouts, and clear exit codes
+- **Fast iteration**: Built‑in testing menu for HDFS/TextProc flows
+- **Colorful UX**: Rich, readable terminal output with concise logs
 
 ## 🔧 Development
 
 ### Adding New Apps
 
 1. Add app definition to `config.yaml`:
-   ```yaml
+```yaml
    apps:
      myNewApp:
        type: "processor"
@@ -272,9 +332,9 @@ deployment_properties:
 
 ## 📝 Legacy Components
 
-> **Note**: The SCDF installation scripts (`scdf_install_k8s.sh`) are legacy components from an older version. The core functionality is now focused on stream management via `rag-stream.sh`.
+> The SCDF installation helpers (e.g., `scdf_install_k8s.sh`) are legacy/testing utilities. The core functionality is centered on `rag-stream.sh`.
 
-For SCDF installation, refer to the [Spring Cloud Data Flow documentation](https://dataflow.spring.io/docs/installation/).
+For SCDF installation, refer to the official docs: [Spring Cloud Data Flow installation](https://dataflow.spring.io/docs/installation/).
 
 ## 🤝 Contributing
 
@@ -286,10 +346,10 @@ For SCDF installation, refer to the [Spring Cloud Data Flow documentation](https
 
 ## 📄 License
 
-MIT License - see LICENSE file for details.
+MIT License — see LICENSE for details.
 
 ---
 
-**Core Component**: `rag-stream.sh` - Interactive RAG pipeline management  
-**Configuration**: `config.yaml` - Environment-specific settings  
-**Documentation**: See inline comments and function documentation
+**Core**: `rag-stream.sh` — Interactive RAG pipeline management  
+**Config**: `config.yaml` — Environment‑specific settings  
+**Docs**: Inline function docs + this README
